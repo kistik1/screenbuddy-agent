@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import FastAPI, Request
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 app = FastAPI()
 
@@ -44,7 +44,28 @@ df["combined_text"] = (
     + df["cluster_name"].fillna("").astype(str)
 )
 
-vectorizer = TfidfVectorizer(stop_words="english")
+CUSTOM_STOP_WORDS = list(ENGLISH_STOP_WORDS.union({
+    "recommend",
+    "movie",
+    "movies",
+    "film",
+    "films",
+    "show",
+    "series",
+    "want",
+    "looking",
+    "called",
+    "please",
+    "something",
+    "find",
+    "watch"
+}))
+
+vectorizer = TfidfVectorizer(
+    stop_words=CUSTOM_STOP_WORDS,
+    max_features=5000
+)
+
 tfidf_matrix = vectorizer.fit_transform(df["combined_text"])
 
 
@@ -103,7 +124,7 @@ def get_recommendations(user_query: str) -> str:
     query = user_query.strip()
 
     if not query:
-        return "כתוב לי איזה סוג סרט/סדרה אתה מחפש 🎬"
+        return "Tell me what kind of movie or show you're looking for 🎬"
 
     query_vector = vectorizer.transform([query])
     similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()
@@ -112,10 +133,7 @@ def get_recommendations(user_query: str) -> str:
 
     if similarities[top_indices[0]] < MIN_SIMILARITY:
         return (
-            "לא מצאתי התאמה מספיק טובה 😅\n\n"
-            "נסה לחפש לפי מילים כמו:\n"
-            "<code>space</code>, <code>magic</code>, <code>crime</code>, "
-            "<code>romance</code>, <code>family</code>, <code>shark</code>"
+            "⚠️ I could not find a strong enough match.\n\n"
         )
 
     response = "🎬 <b>ScreenBuddy Recommendations</b>\n\n"
