@@ -161,7 +161,17 @@ def health_check():
         "status": "ScreenBuddy Agent is running",
         "records_loaded": len(df),
     }
+@app.get("/health")
+def health_check_render():
+    return {
+        "status": "ok",
+        "service": "ScreenBuddy Agent",
+        "records_loaded": len(df),
+    }
 
+@app.head("/")
+def root_head():
+    return
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
