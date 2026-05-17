@@ -11,7 +11,7 @@ from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 app = FastAPI()
 
-TELEGRAM_BOT_TOKEN = "8879084175:AAGSzPCKsDkHnD9jKLhIKraMWEAGtgWD6k0"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CSV_PATH = "final_master_catalog_with_clusters.csv"
 
 TOP_N = 3
