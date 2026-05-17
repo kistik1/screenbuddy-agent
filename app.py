@@ -41,13 +41,13 @@ df["listed_in"] = (
 )
 
 df["combined_text"] = (
-    df["title"].fillna("").astype(str)
+    df["title"].fillna("").astype(str).str.lower()
     + " "
-    + df["description"].fillna("").astype(str)
+    + df["description"].fillna("").astype(str).str.lower()
     + " "
-    + df["listed_in"].fillna("").astype(str)
+    + df["listed_in"].fillna("").astype(str).str.lower()
     + " "
-    + df["cluster_name"].fillna("").astype(str)
+    + df["cluster_name"].fillna("").astype(str).str.lower()
 )
 
 CUSTOM_STOP_WORDS = list(ENGLISH_STOP_WORDS.union({
@@ -127,7 +127,7 @@ def get_more_from_same_cluster(index: int, limit: int = 2):
 
 
 def get_recommendations(user_query: str) -> str:
-    query = user_query.strip()
+    query = user_query.strip().lower()
 
     if not query:
         return "Tell me what kind of movie or show you're looking for 🎬"
