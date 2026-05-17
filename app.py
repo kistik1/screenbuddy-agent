@@ -34,6 +34,12 @@ for col in required_columns:
     if col not in df.columns:
         df[col] = ""
 
+df["listed_in"] = (
+    df["genre_1"].fillna("").astype(str) + ", " +
+    df["genre_2"].fillna("").astype(str) + ", " +
+    df["genre_3"].fillna("").astype(str)
+)
+
 df["combined_text"] = (
     df["title"].fillna("").astype(str)
     + " "
