@@ -15,7 +15,7 @@ TELEGRAM_BOT_TOKEN = "8879084175:AAGSzPCKsDkHnD9jKLhIKraMWEAGtgWD6k0"
 CSV_PATH = "final_master_catalog_with_clusters.csv"
 
 TOP_N = 3
-MIN_SIMILARITY = 0.05
+MIN_SIMILARITY = 0.4
 
 df = pd.read_csv(CSV_PATH)
 
