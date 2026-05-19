@@ -19,6 +19,7 @@ DEFAULT_PARSED_QUERY = {
     "target_audience": None,
     "age_category": None,
     "streaming": None,
+    "type": None
 }
 
 
@@ -108,6 +109,7 @@ def generate_recommendation_explanation(
                 "target_audience": item.get("target_audience"),
                 "age_category": item.get("age_category"),
                 "streaming": item.get("streaming"),
+                "type": item.get("type"),
                 "similarity_score": item.get("similarity_score"),
                 "cluster_name": item.get("cluster_name"),
             }

@@ -15,7 +15,8 @@ Allowed JSON structure:
 "duration_preference": null,
 "target_audience": null,
 "age_category": null,
-"streaming": null
+"streaming": null,
+"type" null
 }
 
 Field rules:
@@ -35,6 +36,11 @@ Field rules:
   "medium"
   "long"
   or null.
+
+* type
+    One of:
+    "TV Show"
+    "Movie"
 
 * target_audience:
   Audience phrase if mentioned.
@@ -67,7 +73,8 @@ Output:
 "duration_preference": null,
 "target_audience": null,
 "age_category": null,
-"streaming": "Netflix"
+"streaming": "Netflix",
+"type": "Movie"
 }
 
 User:
@@ -81,7 +88,8 @@ Output:
 "duration_preference": "short",
 "target_audience": "kids",
 "age_category": null,
-"streaming": null
+"streaming": null,
+"type": "TV Show"
 }
 
 Return valid JSON only.

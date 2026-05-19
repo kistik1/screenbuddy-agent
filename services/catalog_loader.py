@@ -21,6 +21,7 @@ REQUIRED_COLUMNS = [
     "target_audience",
     "age_category",
     "streaming",
+    "type"
 ]
 
 
@@ -91,6 +92,8 @@ def build_combined_text(df: pd.DataFrame) -> pd.DataFrame:
         + df["age_category"].fillna("").astype(str).str.lower()
         + " "
         + df["streaming"].fillna("").astype(str).str.lower()
+        + " "
+        + df["type"].fillna("").astype(str).str.lower()
     )
 
     return df

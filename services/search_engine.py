@@ -34,6 +34,8 @@ def apply_filters(
     target_audience = parsed_query.get("target_audience")
     age_category = parsed_query.get("age_category")
 
+    content_type = parsed_query.get("type")
+
     duration_preference = parsed_query.get("duration_preference")
 
     if release_year_min:
@@ -69,7 +71,13 @@ def apply_filters(
             .str.lower()
             .str.contains(age_category.lower(), na=False)
         ]
-
+    if content_type:
+        filtered_df = filtered_df[
+            filtered_df["type"]
+            .astype(str)
+            .str.lower()
+            .str.contains(content_type.lower(), na=False)
+        ]
     if duration_preference:
         if duration_preference == "short":
             filtered_df = filtered_df[
@@ -152,6 +160,7 @@ def build_recommendation_object(
             row.get("description"),
             "No description",
         ),
+        "type": safe(row.get("type")),
         "release_year": safe(row.get("release_year")),
         "duration": safe(row.get("duration")),
         "target_audience": safe(
@@ -291,7 +300,9 @@ def format_recommendations_message(
         age_category = html.escape(
             item["age_category"]
         )
-
+        content_type = html.escape(
+            item["type"]
+        )
         streaming = html.escape(
             item["streaming"]
         )
@@ -338,6 +349,7 @@ def format_recommendations_message(
             f"Audience: {target_audience}\n"
             f"Age category: {age_category}\n"
             f"Streaming: {streaming}\n"
+            f"Type: {content_type}\n"
             f"Similarity score: "
             f"<code>{item['similarity_score']}</code>\n"
             f"K-Means cluster: "
