@@ -16,7 +16,7 @@ Allowed JSON structure:
 "target_audience": null,
 "age_category": null,
 "streaming": null,
-"type" null
+"type": null
 }
 
 Field rules:
@@ -41,6 +41,8 @@ Field rules:
     One of:
     "TV Show"
     "Movie"
+   or null.
+
 
 * target_audience:
   Audience phrase if mentioned.
@@ -89,7 +91,7 @@ Output:
 "target_audience": "kids",
 "age_category": null,
 "streaming": null,
-"type": "TV Show"
+"type": "null"
 }
 
 Return valid JSON only.
