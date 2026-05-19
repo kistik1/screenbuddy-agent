@@ -50,6 +50,9 @@ def health_check_render():
 def root_head():
     return
 
+@app.head("/health")
+def health_head():
+    return
 
 @app.post("/webhook")
 async def telegram_webhook(
