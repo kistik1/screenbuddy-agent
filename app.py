@@ -23,7 +23,7 @@ app = FastAPI()
 
 
 TOP_N = 3
-MIN_SIMILARITY = 0.25
+MIN_SIMILARITY = 0.2
 
 
 df, vectorizer, tfidf_matrix = load_catalog()
