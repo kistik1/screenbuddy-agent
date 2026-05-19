@@ -1,3 +1,4 @@
+import html
 from fastapi import FastAPI, Request
 
 from services.catalog_loader import (
@@ -99,6 +100,11 @@ async def telegram_webhook(
 
     parsed_query = parse_user_query(text)
 
+    debug_message = ( ##only for DEBUG
+        "🧪 <b>DEBUG - LLM Parsed Query</b>\n"
+        f"<code>{html.escape(str(parsed_query))}</code>\n\n"
+    )
+
     recommendations = search_titles(
         user_query=text,
         parsed_query=parsed_query,
@@ -117,7 +123,7 @@ async def telegram_webhook(
         )
     )
 
-    response_message = (
+    response_message = debug_message + (
         format_recommendations_message(
             recommendations=recommendations,
             llm_explanation=llm_explanation,
