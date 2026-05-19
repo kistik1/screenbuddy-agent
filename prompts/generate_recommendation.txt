@@ -12,6 +12,8 @@ Your job is ONLY to explain the recommendations.
 
 Important rules:
 
+** Maximum 15 words
+
 * Use ONLY the provided recommendation data.
 * Do NOT invent movies.
 * Do NOT invent platforms.
