@@ -106,7 +106,10 @@ def test_analyze_user_state_normalizes_and_limits_questions(
     assert result["user_state"]["confidence"] == 1.0
     assert result["user_state"]["avoid"] == ["heavy"]
     assert result["needs_follow_up"] is True
-    assert len(result["follow_up_questions"]) == 2
+    assert len(result["follow_up_questions"]) == 1
+    assert result["follow_up_questions"][0].startswith(
+        "What sounds better right now"
+    )
 
 
 def test_analyze_user_state_uses_heuristic_fallback(
@@ -120,6 +123,53 @@ def test_analyze_user_state_uses_heuristic_fallback(
     assert result["user_state"]["mood"] == "bored"
     assert result["user_state"]["viewing_intent"] == "get_excited"
     assert result["user_state"]["energy_level"] == "medium"
+
+
+def test_analyze_user_state_asks_one_human_question_for_tired_user(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+
+    result = analyzer.analyze_user_state("I'm tired")
+
+    assert result["needs_follow_up"] is True
+    assert result["follow_up_questions"] == [
+        "Got it. Want something light and easy, or are you okay with something a bit deeper?"
+    ]
+
+
+def test_analyze_user_state_does_not_require_avoid_question(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        analyzer,
+        "client",
+        FakeClient(
+            """
+            {
+              "user_state": {
+                "mood": "tired",
+                "energy_level": "low",
+                "viewing_intent": "relax",
+                "content_complexity": "low",
+                "preferred_length": "short",
+                "avoid": [],
+                "confidence": 0.82,
+                "missing_info": []
+              },
+              "needs_follow_up": false,
+              "follow_up_questions": []
+            }
+            """
+        ),
+    )
+
+    result = analyzer.analyze_user_state(
+        "I'm tired and want something light and short"
+    )
+
+    assert result["needs_follow_up"] is False
+    assert result["follow_up_questions"] == []
 
 
 def test_build_search_query_from_user_state():

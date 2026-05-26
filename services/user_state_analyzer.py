@@ -9,10 +9,16 @@ from services.llm_service import (
 )
 
 
-MAX_RUNTIME_FOLLOW_UP_QUESTIONS = 2
+MAX_RUNTIME_FOLLOW_UP_QUESTIONS = 1
 MAX_ALLOWED_FOLLOW_UP_QUESTIONS = 3
 FOLLOW_UP_THRESHOLD = 0.75
 KEY_FIELDS = ("mood", "viewing_intent")
+FOLLOW_UP_PRIORITY = [
+    "viewing_intent",
+    "mood",
+    "content_complexity",
+    "preferred_length",
+]
 
 ALLOWED_VALUES = {
     "mood": {
@@ -51,15 +57,6 @@ ALLOWED_VALUES = {
         "long",
         "unknown",
     },
-}
-
-QUESTION_BANK = {
-    "viewing_intent": "What are you in the mood for: comfort, laughs, or something exciting?",
-    "mood": "How are you feeling right now: tired, bored, sad, or mostly neutral?",
-    "preferred_length": "How much time do you have right now: short, medium, or long?",
-    "content_complexity": "Do you want something light or something deeper?",
-    "avoid": "Anything you definitely do not want to watch today?",
-    "energy_level": "Do you want something calm, balanced, or high-energy?",
 }
 
 DEFAULT_USER_STATE = {
@@ -133,48 +130,96 @@ def _key_fields_known(user_state: Dict[str, Any]) -> bool:
 
 
 def _calculate_missing_info(user_state: Dict[str, Any]) -> List[str]:
-    priority = [
-        "viewing_intent",
-        "mood",
-        "preferred_length",
-        "content_complexity",
-        "avoid",
-        "energy_level",
-    ]
-
     missing_info = _normalize_missing_info(
         user_state.get("missing_info")
     )
 
-    for field in priority:
+    for field in FOLLOW_UP_PRIORITY:
         value = user_state.get(field)
-        if field == "avoid":
-            if not value and field not in missing_info:
-                missing_info.append(field)
-            continue
         if value == "unknown" and field not in missing_info:
             missing_info.append(field)
 
     return missing_info
 
 
-def _build_follow_up_questions(
-    missing_info: List[str],
-    max_questions: int,
-) -> List[str]:
-    cap = min(
-        max_questions,
-        MAX_RUNTIME_FOLLOW_UP_QUESTIONS,
-        MAX_ALLOWED_FOLLOW_UP_QUESTIONS,
+def _has_secondary_signal(
+    user_state: Dict[str, Any],
+) -> bool:
+    return any(
+        user_state.get(field) != "unknown"
+        for field in (
+            "content_complexity",
+            "preferred_length",
+            "energy_level",
+        )
+    ) or bool(user_state.get("avoid"))
+
+
+def _should_ask_follow_up(
+    user_state: Dict[str, Any],
+) -> bool:
+    if not _key_fields_known(user_state):
+        return True
+
+    if (
+        user_state.get("content_complexity") == "unknown"
+        and user_state.get("preferred_length") == "unknown"
+    ):
+        return True
+
+    return (
+        user_state["confidence"] < FOLLOW_UP_THRESHOLD
+        and not _has_secondary_signal(user_state)
     )
-    questions: List[str] = []
-    for field in missing_info:
-        question = QUESTION_BANK.get(field)
-        if question and question not in questions:
-            questions.append(question)
-        if len(questions) >= cap:
-            break
-    return questions
+
+
+def _select_follow_up_field(
+    user_state: Dict[str, Any],
+    missing_info: List[str],
+) -> str | None:
+    for field in FOLLOW_UP_PRIORITY:
+        if field not in missing_info:
+            continue
+        if field == "preferred_length":
+            if user_state.get("content_complexity") == "unknown":
+                continue
+        return field
+    return None
+
+
+def _build_human_follow_up_question(
+    user_state: Dict[str, Any],
+    field: str | None,
+) -> str:
+    mood = user_state.get("mood")
+    viewing_intent = user_state.get("viewing_intent")
+    complexity = user_state.get("content_complexity")
+
+    if field == "mood":
+        if viewing_intent == "unknown":
+            return "What kind of mood are you in tonight?"
+        return "Got it. How are you feeling right now?"
+
+    if field == "viewing_intent":
+        if mood == "tired":
+            return "Got it. Do you want something comforting, funny, or a bit more exciting?"
+        if mood == "sad":
+            return "Do you want something comforting, funny, or more distracting?"
+        return "What sounds better right now: something comforting, funny, or exciting?"
+
+    if field == "content_complexity":
+        if mood in {"tired", "stressed"}:
+            return "Got it. Want something light and easy, or are you okay with something a bit deeper?"
+        return "Do you want something light and easy, or something a bit deeper?"
+
+    if field == "preferred_length":
+        if complexity == "low":
+            return "Nice. Do you want a quick watch or something longer?"
+        if complexity == "high":
+            return "Okay. Are you up for a quick watch or something you can sink into?"
+        return "Do you want a quick watch or something longer?"
+
+    return "What sounds good to you right now?"
 
 
 def _normalize_result(
@@ -194,17 +239,26 @@ def _normalize_result(
     )
     user_state["missing_info"] = _calculate_missing_info(user_state)
 
-    needs_follow_up = (
-        user_state["confidence"] < FOLLOW_UP_THRESHOLD
-        or not _key_fields_known(user_state)
-    )
+    needs_follow_up = _should_ask_follow_up(user_state)
 
     follow_up_questions = []
     if needs_follow_up:
-        follow_up_questions = _build_follow_up_questions(
-            user_state["missing_info"],
+        cap = min(
             max_follow_up_questions,
+            MAX_RUNTIME_FOLLOW_UP_QUESTIONS,
+            MAX_ALLOWED_FOLLOW_UP_QUESTIONS,
         )
+        follow_up_field = _select_follow_up_field(
+            user_state,
+            user_state["missing_info"],
+        )
+        if follow_up_field and cap > 0:
+            follow_up_questions = [
+                _build_human_follow_up_question(
+                    user_state,
+                    follow_up_field,
+                )
+            ]
 
     result["user_state"] = user_state
     result["needs_follow_up"] = bool(

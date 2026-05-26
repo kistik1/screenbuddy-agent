@@ -26,6 +26,7 @@ app = FastAPI()
 
 TOP_N = 3
 MIN_SIMILARITY = 0.2
+MAX_CONVERSATIONAL_FOLLOW_UPS = 2
 conversation_store = PendingConversationStore()
 
 
@@ -60,14 +61,9 @@ def health_head():
 
 
 def _build_follow_up_message(questions: list[str]) -> str:
-    question_lines = "\n".join(
-        f"• {html.escape(question)}"
-        for question in questions
-    )
-    return (
-        "I need a bit more to tune the recommendation.\n\n"
-        f"{question_lines}"
-    )
+    if not questions:
+        return ""
+    return html.escape(questions[0])
 
 
 @app.post("/webhook")
@@ -117,8 +113,15 @@ async def telegram_webhook(
         conversation_messages
     )
     analysis = analyze_user_state(analysis_input)
+    follow_up_count = max(
+        0,
+        len(conversation_messages) - 1,
+    )
 
-    if analysis["needs_follow_up"]:
+    if (
+        analysis["needs_follow_up"]
+        and follow_up_count < MAX_CONVERSATIONAL_FOLLOW_UPS
+    ):
         conversation_store.set(
             chat_id=chat_id,
             original_message=original_message,
