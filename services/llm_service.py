@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -11,18 +11,6 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
-DEFAULT_PARSED_QUERY = {
-    "query_text": "",
-    "release_year_min": None,
-    "release_year_max": None,
-    "duration_preference": None,
-    "target_audience": None,
-    "age_category": None,
-    "streaming": None,
-    "type": None
-}
-
-
 def load_prompt(file_name: str) -> str:
     path = f"prompts/{file_name}"
 
@@ -30,57 +18,14 @@ def load_prompt(file_name: str) -> str:
         return file.read()
 
 
-def safe_json_loads(text: str) -> Dict[str, Any]:
+def safe_json_loads(
+    text: str,
+    fallback: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     try:
         return json.loads(text)
     except Exception:
-        return DEFAULT_PARSED_QUERY.copy()
-
-
-def parse_user_query(user_query: str) -> Dict[str, Any]:
-    if not client:
-        fallback = DEFAULT_PARSED_QUERY.copy()
-        fallback["query_text"] = user_query
-        return fallback
-
-    system_prompt = load_prompt("parse_user_query.txt")
-
-    try:
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_query,
-                },
-            ],
-        )
-
-        content = response.choices[0].message.content.strip()
-
-        parsed = safe_json_loads(content)
-
-        result = DEFAULT_PARSED_QUERY.copy()
-        result.update(parsed)
-
-        if not result.get("query_text"):
-            result["query_text"] = user_query
-
-        return result
-
-    except Exception as error:
-        print(f"OpenAI parse error: {error}")
-
-        fallback = DEFAULT_PARSED_QUERY.copy()
-        fallback["query_text"] = user_query
-
-        return fallback
+        return (fallback or {}).copy()
 
 
 def generate_recommendation_explanation(
