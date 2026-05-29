@@ -46,6 +46,7 @@ def test_analyze_user_state_skips_follow_up_when_confident(
                 "missing_info": []
               },
               "needs_follow_up": false,
+              "assistant_reply": "",
               "follow_up_questions": []
             }
             """
@@ -87,6 +88,7 @@ def test_analyze_user_state_normalizes_and_limits_questions(
                 ]
               },
               "needs_follow_up": true,
+              "assistant_reply": "Hello! What are you in the mood to watch tonight?",
               "follow_up_questions": [
                 "Q1",
                 "Q2",
@@ -106,6 +108,7 @@ def test_analyze_user_state_normalizes_and_limits_questions(
     assert result["user_state"]["confidence"] == 1.0
     assert result["user_state"]["avoid"] == ["heavy"]
     assert result["needs_follow_up"] is True
+    assert result["assistant_reply"] == "Hello! What are you in the mood to watch tonight?"
     assert len(result["follow_up_questions"]) == 1
     assert result["follow_up_questions"][0].startswith(
         "What sounds better right now"
@@ -133,9 +136,26 @@ def test_analyze_user_state_asks_one_human_question_for_tired_user(
     result = analyzer.analyze_user_state("I'm tired")
 
     assert result["needs_follow_up"] is True
+    assert result["assistant_reply"] == (
+        "Got it. Want something light and easy, or are you okay with something a bit deeper?"
+    )
     assert result["follow_up_questions"] == [
         "Got it. Want something light and easy, or are you okay with something a bit deeper?"
     ]
+
+
+def test_analyze_user_state_greeting_only_gets_warm_reply(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+
+    result = analyzer.analyze_user_state("Hello!")
+
+    assert result["needs_follow_up"] is True
+    assert result["assistant_reply"] == (
+        "Hello! What are you in the mood to watch tonight?"
+    )
+    assert result["user_state"]["mood"] == "unknown"
 
 
 def test_analyze_user_state_does_not_require_avoid_question(
@@ -158,6 +178,7 @@ def test_analyze_user_state_does_not_require_avoid_question(
                 "missing_info": []
               },
               "needs_follow_up": false,
+              "assistant_reply": "",
               "follow_up_questions": []
             }
             """

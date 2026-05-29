@@ -20,6 +20,7 @@ Use this exact JSON shape:
     "missing_info": []
   },
   "needs_follow_up": false,
+  "assistant_reply": "",
   "follow_up_questions": []
 }
 
@@ -30,10 +31,13 @@ Rules:
 3. confidence must be a number between 0.0 and 1.0.
 4. missing_info should contain field names that are still important to clarify.
 5. needs_follow_up should be true only when confidence is low or key fields are missing.
-6. Ask at most 2 short, friendly, conversational follow-up questions.
-7. Do not ask follow-up questions if confidence is at least 0.75 and both mood and viewing_intent are known.
-8. Prefer questions about:
+6. assistant_reply must be a short, warm assistant message. If a follow-up is needed, it should include exactly one small question.
+7. If the user message is only a greeting like "hello" or "hi", reply warmly and ask one mood-led watch question.
+8. Ask at most 1 short, friendly, conversational follow-up question.
+9. Do not ask follow-up questions if confidence is at least 0.75 and both mood and viewing_intent are known.
+10. Prefer questions about:
    - preferred_length
    - content_complexity
    - avoid
-9. Keep follow-up questions short, natural, and directly useful for choosing what to watch.
+11. Keep the assistant_reply short, natural, and directly useful for choosing what to watch.
+12. follow_up_questions may be empty; assistant_reply is the primary reply field.

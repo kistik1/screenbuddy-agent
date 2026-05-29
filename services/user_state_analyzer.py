@@ -13,6 +13,16 @@ MAX_RUNTIME_FOLLOW_UP_QUESTIONS = 1
 MAX_ALLOWED_FOLLOW_UP_QUESTIONS = 3
 FOLLOW_UP_THRESHOLD = 0.75
 KEY_FIELDS = ("mood", "viewing_intent")
+GREETING_ONLY_PHRASES = {
+    "hi",
+    "hello",
+    "hey",
+    "hiya",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+}
 FOLLOW_UP_PRIORITY = [
     "viewing_intent",
     "mood",
@@ -73,6 +83,7 @@ DEFAULT_USER_STATE = {
 DEFAULT_ANALYZER_RESULT = {
     "user_state": DEFAULT_USER_STATE.copy(),
     "needs_follow_up": True,
+    "assistant_reply": "",
     "follow_up_questions": [],
 }
 
@@ -123,6 +134,23 @@ def _clamp_confidence(value: Any) -> float:
     if confidence > 1.0:
         return 1.0
     return round(confidence, 2)
+
+
+def _normalize_assistant_reply(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _clean_text(text: str) -> str:
+    return "".join(
+        char.lower() for char in text if char.isalnum() or char.isspace()
+    ).strip()
+
+
+def is_greeting_only_message(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+    return cleaned in GREETING_ONLY_PHRASES
 
 
 def _key_fields_known(user_state: Dict[str, Any]) -> bool:
@@ -190,10 +218,14 @@ def _select_follow_up_field(
 def _build_human_follow_up_question(
     user_state: Dict[str, Any],
     field: str | None,
+    greeting_only: bool = False,
 ) -> str:
     mood = user_state.get("mood")
     viewing_intent = user_state.get("viewing_intent")
     complexity = user_state.get("content_complexity")
+
+    if greeting_only:
+        return "Hello! What are you in the mood to watch tonight?"
 
     if field == "mood":
         if viewing_intent == "unknown":
@@ -225,6 +257,7 @@ def _build_human_follow_up_question(
 def _normalize_result(
     raw_result: Dict[str, Any],
     max_follow_up_questions: int,
+    greeting_only: bool = False,
 ) -> Dict[str, Any]:
     result = DEFAULT_ANALYZER_RESULT.copy()
     user_state = DEFAULT_USER_STATE.copy()
@@ -240,8 +273,13 @@ def _normalize_result(
     user_state["missing_info"] = _calculate_missing_info(user_state)
 
     needs_follow_up = _should_ask_follow_up(user_state)
+    if greeting_only:
+        needs_follow_up = True
 
     follow_up_questions = []
+    assistant_reply = _normalize_assistant_reply(
+        raw_result.get("assistant_reply")
+    )
     if needs_follow_up:
         cap = min(
             max_follow_up_questions,
@@ -257,13 +295,26 @@ def _normalize_result(
                 _build_human_follow_up_question(
                     user_state,
                     follow_up_field,
+                    greeting_only=greeting_only,
+                )
+            ]
+        elif greeting_only and cap > 0:
+            follow_up_questions = [
+                _build_human_follow_up_question(
+                    user_state,
+                    None,
+                    greeting_only=True,
                 )
             ]
 
+    if not assistant_reply and follow_up_questions:
+        assistant_reply = follow_up_questions[0]
+
     result["user_state"] = user_state
     result["needs_follow_up"] = bool(
-        needs_follow_up and follow_up_questions
+        needs_follow_up and assistant_reply
     )
+    result["assistant_reply"] = assistant_reply
     result["follow_up_questions"] = follow_up_questions
     return result
 
@@ -351,10 +402,13 @@ def analyze_user_state(
     message: str,
     max_follow_up_questions: int = MAX_RUNTIME_FOLLOW_UP_QUESTIONS,
 ) -> Dict[str, Any]:
+    greeting_only = is_greeting_only_message(message)
+
     if not client:
         return _normalize_result(
             _heuristic_state(message),
             max_follow_up_questions,
+            greeting_only=greeting_only,
         )
 
     system_prompt = load_prompt("analyze_user_state.txt")
@@ -377,12 +431,17 @@ def analyze_user_state(
         )
         content = response.choices[0].message.content.strip()
         parsed = safe_json_loads(content, DEFAULT_ANALYZER_RESULT)
-        return _normalize_result(parsed, max_follow_up_questions)
+        return _normalize_result(
+            parsed,
+            max_follow_up_questions,
+            greeting_only=greeting_only,
+        )
     except Exception as error:
         print(f"OpenAI analyzer error: {error}")
         return _normalize_result(
             _heuristic_state(message),
             max_follow_up_questions,
+            greeting_only=greeting_only,
         )
 
 
@@ -441,11 +500,15 @@ class PendingConversationStore:
         original_message: str,
         conversation_messages: List[str],
         analysis: Dict[str, Any],
+        follow_up_count: int,
+        started_with_greeting: bool,
     ) -> None:
         self._store[chat_id] = {
             "original_message": original_message,
             "conversation_messages": conversation_messages,
             "analysis": analysis,
+            "follow_up_count": follow_up_count,
+            "started_with_greeting": started_with_greeting,
             "updated_at": time.time(),
         }
 

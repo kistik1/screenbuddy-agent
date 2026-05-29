@@ -18,6 +18,7 @@ from services.user_state_analyzer import (
     analyze_user_state,
     build_search_query_from_user_state,
     combine_conversation_messages,
+    is_greeting_only_message,
 )
 
 
@@ -26,7 +27,7 @@ app = FastAPI()
 
 TOP_N = 3
 MIN_SIMILARITY = 0.2
-MAX_CONVERSATIONAL_FOLLOW_UPS = 2
+MAX_CONVERSATIONAL_FOLLOW_UPS = 3
 conversation_store = PendingConversationStore()
 
 
@@ -64,6 +65,15 @@ def _build_follow_up_message(questions: list[str]) -> str:
     if not questions:
         return ""
     return html.escape(questions[0])
+
+
+def _build_assistant_reply(analysis: dict) -> str:
+    assistant_reply = (analysis.get("assistant_reply") or "").strip()
+    if assistant_reply:
+        return html.escape(assistant_reply)
+    return _build_follow_up_message(
+        analysis.get("follow_up_questions", [])
+    )
 
 
 @app.post("/webhook")
@@ -105,18 +115,42 @@ async def telegram_webhook(
         original_message = pending_state[
             "original_message"
         ]
+        follow_up_count = pending_state.get(
+            "follow_up_count",
+            0,
+        )
+        started_with_greeting = pending_state.get(
+            "started_with_greeting",
+            False,
+        )
     else:
         conversation_messages = [text]
         original_message = text
+        follow_up_count = 0
+        started_with_greeting = is_greeting_only_message(text)
 
-    analysis_input = combine_conversation_messages(
-        conversation_messages
-    )
+    if started_with_greeting and len(conversation_messages) == 1:
+        analysis_input = text
+    else:
+        analysis_input = combine_conversation_messages(
+            conversation_messages
+        )
     analysis = analyze_user_state(analysis_input)
-    follow_up_count = max(
-        0,
-        len(conversation_messages) - 1,
-    )
+
+    if started_with_greeting and len(conversation_messages) == 1:
+        conversation_store.set(
+            chat_id=chat_id,
+            original_message=original_message,
+            conversation_messages=conversation_messages,
+            analysis=analysis,
+            follow_up_count=1,
+            started_with_greeting=True,
+        )
+        send_telegram_message(
+            chat_id,
+            _build_assistant_reply(analysis),
+        )
+        return {"ok": True}
 
     if (
         analysis["needs_follow_up"]
@@ -127,20 +161,23 @@ async def telegram_webhook(
             original_message=original_message,
             conversation_messages=conversation_messages,
             analysis=analysis,
+            follow_up_count=follow_up_count + 1,
+            started_with_greeting=started_with_greeting,
         )
         send_telegram_message(
             chat_id,
-            _build_follow_up_message(
-                analysis["follow_up_questions"]
-            ),
+            _build_assistant_reply(analysis),
         )
         return {"ok": True}
 
     conversation_store.clear(chat_id)
 
+    recommendation_context = combine_conversation_messages(
+        conversation_messages
+    )
     parsed_query = build_search_query_from_user_state(
         user_state=analysis["user_state"],
-        original_text=original_message,
+        original_text=recommendation_context,
     )
 
     debug_message = (
@@ -151,7 +188,7 @@ async def telegram_webhook(
     )
 
     recommendations = search_titles(
-        user_query=original_message,
+        user_query=recommendation_context,
         parsed_query=parsed_query,
         df=df,
         vectorizer=vectorizer,
@@ -162,7 +199,7 @@ async def telegram_webhook(
 
     llm_explanation = (
         generate_recommendation_explanation(
-            user_query=original_message,
+            user_query=recommendation_context,
             parsed_query=parsed_query,
             recommendations=recommendations,
         )

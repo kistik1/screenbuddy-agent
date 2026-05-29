@@ -29,6 +29,9 @@ def test_webhook_sends_follow_up_and_stores_state(
                 ],
             },
             "needs_follow_up": True,
+            "assistant_reply": (
+                "Hello! What are you in the mood to watch tonight?"
+            ),
             "follow_up_questions": [
                 "What sounds better right now: something comforting, funny, or exciting?",
             ],
@@ -58,7 +61,7 @@ def test_webhook_sends_follow_up_and_stores_state(
     assert sent_messages
     assert (
         sent_messages[0][1]
-        == "What sounds better right now: something comforting, funny, or exciting?"
+        == "Hello! What are you in the mood to watch tonight?"
     )
     assert "I need a bit more to tune the recommendation" not in sent_messages[0][1]
     pending = app_module.conversation_store.get(123)
@@ -66,6 +69,7 @@ def test_webhook_sends_follow_up_and_stores_state(
     assert pending["conversation_messages"] == [
         "I don't know what to watch"
     ]
+    assert pending["follow_up_count"] == 1
 
 
 def test_webhook_resumes_flow_and_returns_recommendation(
@@ -95,6 +99,9 @@ def test_webhook_resumes_flow_and_returns_recommendation(
                     ],
                 },
                 "needs_follow_up": True,
+                "assistant_reply": (
+                    "Hello! What are you in the mood to watch tonight?"
+                ),
                 "follow_up_questions": [
                     "What kind of mood are you in tonight?",
                 ],
@@ -109,10 +116,11 @@ def test_webhook_resumes_flow_and_returns_recommendation(
                 "avoid": [],
                 "confidence": 0.85,
                 "missing_info": [],
-            },
-            "needs_follow_up": False,
-            "follow_up_questions": [],
-        }
+                },
+                "needs_follow_up": False,
+                "assistant_reply": "",
+                "follow_up_questions": [],
+            }
 
     monkeypatch.setattr(
         app_module,
@@ -194,12 +202,12 @@ def test_webhook_resumes_flow_and_returns_recommendation(
     assert first.status_code == 200
     assert second.status_code == 200
     assert len(sent_messages) == 2
-    assert sent_messages[0][1] == "What kind of mood are you in tonight?"
+    assert sent_messages[0][1] == "Hello! What are you in the mood to watch tonight?"
     assert "ScreenBuddy Recommendations" in sent_messages[1][1]
     assert app_module.conversation_store.get(456) is None
 
 
-def test_webhook_stops_after_two_follow_ups(
+def test_webhook_stops_after_three_follow_ups(
     monkeypatch,
 ):
     app_module = importlib.import_module("app")
@@ -225,6 +233,7 @@ def test_webhook_stops_after_two_follow_ups(
                 ],
             },
             "needs_follow_up": True,
+            "assistant_reply": "Hello! What are you in the mood to watch tonight?",
             "follow_up_questions": [
                 "What kind of mood are you in tonight?",
             ],
@@ -282,7 +291,7 @@ def test_webhook_stops_after_two_follow_ups(
             }
         },
     )
-    final_response = client.post(
+    client.post(
         "/webhook",
         json={
             "message": {
@@ -291,10 +300,80 @@ def test_webhook_stops_after_two_follow_ups(
             }
         },
     )
+    final_response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 789},
+                "text": "anything",
+            }
+        },
+    )
 
     assert final_response.status_code == 200
-    assert len(sent_messages) == 3
-    assert sent_messages[0][1] == "What kind of mood are you in tonight?"
-    assert sent_messages[1][1] == "What kind of mood are you in tonight?"
-    assert "I could not find a strong enough match." in sent_messages[2][1]
+    assert len(sent_messages) == 4
+    assert sent_messages[0][1] == "Hello! What are you in the mood to watch tonight?"
+    assert sent_messages[1][1] == "Hello! What are you in the mood to watch tonight?"
+    assert sent_messages[2][1] == "Hello! What are you in the mood to watch tonight?"
+    assert "I could not find a strong enough match." in sent_messages[3][1]
     assert app_module.conversation_store.get(789) is None
+
+
+def test_webhook_greeting_only_starts_intake(
+    monkeypatch,
+):
+    app_module = importlib.import_module("app")
+    app_module.conversation_store.clear(321)
+
+    sent_messages = []
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_user_state",
+        lambda text: {
+            "user_state": {
+                "mood": "unknown",
+                "energy_level": "unknown",
+                "viewing_intent": "unknown",
+                "content_complexity": "unknown",
+                "preferred_length": "unknown",
+                "avoid": [],
+                "confidence": 0.0,
+                "missing_info": [
+                    "mood",
+                    "viewing_intent",
+                ],
+            },
+            "needs_follow_up": True,
+            "assistant_reply": "Hello! What are you in the mood to watch tonight?",
+            "follow_up_questions": [],
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append(
+            (chat_id, text)
+        )
+        or True,
+    )
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 321},
+                "text": "Hello!",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_messages == [
+        (321, "Hello! What are you in the mood to watch tonight?")
+    ]
+    pending = app_module.conversation_store.get(321)
+    assert pending is not None
+    assert pending["started_with_greeting"] is True
+    assert pending["follow_up_count"] == 1
