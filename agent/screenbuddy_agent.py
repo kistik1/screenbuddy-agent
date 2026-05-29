@@ -89,7 +89,10 @@ class ScreenBuddyAgent:
         )
 
     def _recommend(self, session) -> AgentResponse:
-        intent = build_watch_search_intent(session.user_state)
+        intent = build_watch_search_intent(
+            session.user_state,
+            session.search_filters,
+        )
         parsed_query = intent.to_search_query()
         recommendations = self.search_fn(
             user_query=session.conversation_text(),

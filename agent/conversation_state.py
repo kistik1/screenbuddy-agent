@@ -92,6 +92,11 @@ class WatchSearchIntent:
     runtime_preference: Optional[str] = None
     language_preference: Optional[str] = None
     platform_preference: Optional[str] = None
+    release_year_min: Optional[int] = None
+    release_year_max: Optional[int] = None
+    target_audience: Optional[str] = None
+    age_category: Optional[str] = None
+    content_type: Optional[str] = None
     free_text_context: str = ""
 
     def to_search_query(self) -> Dict[str, Any]:
@@ -111,13 +116,13 @@ class WatchSearchIntent:
         return {
             "query_text": " ".join(query_parts).strip()
             or self.free_text_context,
-            "release_year_min": None,
-            "release_year_max": None,
+            "release_year_min": self.release_year_min,
+            "release_year_max": self.release_year_max,
             "duration_preference": self.runtime_preference,
-            "target_audience": None,
-            "age_category": None,
+            "target_audience": self.target_audience,
+            "age_category": self.age_category,
             "streaming": self.platform_preference,
-            "type": None,
+            "type": self.content_type,
         }
 
 
@@ -131,6 +136,7 @@ class ConversationSession:
     follow_up_count: int = 0
     last_intent: Optional[WatchSearchIntent] = None
     last_recommendations: List[Dict[str, Any]] = field(default_factory=list)
+    search_filters: Dict[str, Any] = field(default_factory=dict)
     awaiting_feedback: bool = False
     updated_at: float = field(default_factory=time.time)
 
@@ -172,4 +178,3 @@ def _merge_unique(existing: List[str], incoming: List[str]) -> List[str]:
         if normalized and normalized not in result:
             result.append(normalized)
     return result
-

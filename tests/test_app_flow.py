@@ -125,6 +125,78 @@ def test_agent_feedback_with_direction_researches(monkeypatch):
     assert "Do these feel right" in response.message
 
 
+def test_agent_feedback_can_refine_to_tv_shows(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I had a long day and want something light",
+    )
+    response = agent.handle_message(123, "only tv shows")
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[1]["type"] == "TV Show"
+
+
+def test_agent_feedback_can_refine_to_movies(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I had a long day and want something light",
+    )
+    response = agent.handle_message(123, "only movies")
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[1]["type"] == "Movie"
+
+
+def test_agent_feedback_can_refine_existing_search_filters(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I had a long day and want something light",
+    )
+
+    refinements = (
+        ("for adults", "target_audience", "adults"),
+        ("something shorter", "duration_preference", "short"),
+        ("netflix only", "streaming", "netflix"),
+        ("after 2018", "release_year_min", 2018),
+        ("before 2000", "release_year_max", 2000),
+        ("make it classic", "age_category", "classic"),
+    )
+
+    for message, key, value in refinements:
+        agent.handle_message(123, message)
+        assert search_calls[-1][key] == value
+
+
+def test_agent_feedback_keeps_previous_filters(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I had a long day and want something light",
+    )
+    agent.handle_message(123, "only tv shows")
+    agent.handle_message(123, "make it shorter")
+
+    assert search_calls[-1]["type"] == "TV Show"
+    assert search_calls[-1]["duration_preference"] == "short"
+
+
 def test_webhook_uses_agent_response(monkeypatch):
     app_module = importlib.import_module("app")
     app_module.screenbuddy_agent.reset(456)
