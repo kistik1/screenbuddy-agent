@@ -28,6 +28,12 @@ ScreenBuddy should:
 - ask `Do these feel right, or should I tune the search?`
 - refine from feedback like `not it`, `too heavy`, or `I wanted something more fun` without restarting the session
 
+Telegram commands:
+
+- `/start` clears the current chat session and sends the onboarding message
+- `/new` clears the current chat session and starts a fresh recommendation conversation
+- `/help` explains how to use the bot without changing the current session
+
 ## Local Development
 
 Install dependencies:
@@ -61,5 +67,6 @@ Without `OPENAI_API_KEY`, ScreenBuddy uses deterministic heuristic extraction so
 ## Tradeoffs
 
 - Session memory is in process. This is simple and testable, but it will reset on deploy/restart and should move to durable storage for production.
+- `/start` and `/new` both clear the same in-memory session keyed by Telegram `chat_id`; there is no durable multi-session history yet.
 - The search integration still uses the existing TF-IDF catalog engine. The refactor adds intent building, ranking, and conversational control around it rather than introducing a heavier retrieval stack.
 - State extraction keeps the existing legacy analyzer API for compatibility while the new agent package provides the cleaner product architecture.

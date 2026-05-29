@@ -231,3 +231,109 @@ def test_webhook_uses_agent_response(monkeypatch):
 
     assert response.status_code == 200
     assert sent_messages == [(456, "Agent reply")]
+
+
+def test_webhook_start_resets_session_and_sends_onboarding(monkeypatch):
+    app_module = importlib.import_module("app")
+    app_module.screenbuddy_agent.store.get_or_create(456).add_message(
+        "old message"
+    )
+
+    sent_messages = []
+
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append((chat_id, text)) or True,
+    )
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 456},
+                "text": "/start",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_messages == [(456, app_module.START_MESSAGE)]
+    assert app_module.screenbuddy_agent.store.get(456) is None
+
+
+def test_webhook_new_resets_session_and_sends_new_session_copy(
+    monkeypatch,
+):
+    app_module = importlib.import_module("app")
+    app_module.screenbuddy_agent.store.get_or_create(456).add_message(
+        "old message"
+    )
+
+    sent_messages = []
+
+    monkeypatch.setattr(
+        app_module.screenbuddy_agent,
+        "handle_message",
+        lambda chat_id, text: (_ for _ in ()).throw(
+            AssertionError("handle_message should not run for /new")
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append((chat_id, text)) or True,
+    )
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 456},
+                "text": "/new",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_messages == [(456, app_module.NEW_SESSION_MESSAGE)]
+    assert app_module.screenbuddy_agent.store.get(456) is None
+
+
+def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
+    app_module = importlib.import_module("app")
+    session = app_module.screenbuddy_agent.store.get_or_create(456)
+    session.add_message("keep me")
+
+    sent_messages = []
+
+    monkeypatch.setattr(
+        app_module.screenbuddy_agent,
+        "handle_message",
+        lambda chat_id, text: (_ for _ in ()).throw(
+            AssertionError("handle_message should not run for /help")
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append((chat_id, text)) or True,
+    )
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 456},
+                "text": "/help",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_messages == [(456, app_module.HELP_MESSAGE)]
+    assert app_module.screenbuddy_agent.store.get(456) is session
+    assert session.messages == ["keep me"]

@@ -14,6 +14,23 @@ app = FastAPI()
 TOP_N = 3
 MIN_SIMILARITY = 0.2
 
+START_MESSAGE = (
+    "Hi, I'm <b>ScreenBuddy</b>. Tell me a little about the kind "
+    "of night you're having, and I'll help you find something "
+    "that fits."
+)
+
+NEW_SESSION_MESSAGE = (
+    "Started a new session. Tell me what kind of mood you're in, "
+    "and I'll find something that fits."
+)
+
+HELP_MESSAGE = (
+    "Tell me how you're feeling or what vibe you want to watch. "
+    "Use /new to start over, and reply normally if you want me to "
+    "refine the recommendations."
+)
+
 
 df, vectorizer, tfidf_matrix = load_catalog()
 conversation_store = ConversationSessionStore()
@@ -74,14 +91,16 @@ async def telegram_webhook(request: Request):
 
     if text == "/start":
         screenbuddy_agent.reset(chat_id)
-        send_telegram_message(
-            chat_id,
-            (
-                "Hi, I'm <b>ScreenBuddy</b>. Tell me a little about the kind "
-                "of night you're having, and I'll help you find something "
-                "that fits."
-            ),
-        )
+        send_telegram_message(chat_id, START_MESSAGE)
+        return {"ok": True}
+
+    if text == "/new":
+        screenbuddy_agent.reset(chat_id)
+        send_telegram_message(chat_id, NEW_SESSION_MESSAGE)
+        return {"ok": True}
+
+    if text == "/help":
+        send_telegram_message(chat_id, HELP_MESSAGE)
         return {"ok": True}
 
     agent_response = screenbuddy_agent.handle_message(
@@ -90,4 +109,3 @@ async def telegram_webhook(request: Request):
     )
     send_telegram_message(chat_id, agent_response.message)
     return {"ok": True}
-
