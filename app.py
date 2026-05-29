@@ -1,25 +1,11 @@
-import html
-
 from fastapi import FastAPI, Request
 
+from agent.conversation_state import ConversationSessionStore
+from agent.screenbuddy_agent import ScreenBuddyAgent
 from services.catalog_loader import load_catalog
-from services.llm_service import (
-    generate_recommendation_explanation,
-)
-from services.search_engine import (
-    format_recommendations_message,
-    search_titles,
-)
-from services.telegram_service import (
-    send_telegram_message,
-)
-from services.user_state_analyzer import (
-    PendingConversationStore,
-    analyze_user_state,
-    build_search_query_from_user_state,
-    combine_conversation_messages,
-    is_greeting_only_message,
-)
+from services.llm_service import generate_recommendation_explanation
+from services.search_engine import search_titles
+from services.telegram_service import send_telegram_message
 
 
 app = FastAPI()
@@ -27,11 +13,22 @@ app = FastAPI()
 
 TOP_N = 3
 MIN_SIMILARITY = 0.2
-MAX_CONVERSATIONAL_FOLLOW_UPS = 3
-conversation_store = PendingConversationStore()
 
 
 df, vectorizer, tfidf_matrix = load_catalog()
+conversation_store = ConversationSessionStore()
+screenbuddy_agent = ScreenBuddyAgent(
+    store=conversation_store,
+    search_fn=search_titles,
+    explanation_fn=generate_recommendation_explanation,
+    search_context={
+        "df": df,
+        "vectorizer": vectorizer,
+        "tfidf_matrix": tfidf_matrix,
+    },
+    top_n=TOP_N,
+    min_similarity=MIN_SIMILARITY,
+)
 
 
 @app.get("/")
@@ -61,25 +58,8 @@ def health_head():
     return
 
 
-def _build_follow_up_message(questions: list[str]) -> str:
-    if not questions:
-        return ""
-    return html.escape(questions[0])
-
-
-def _build_assistant_reply(analysis: dict) -> str:
-    assistant_reply = (analysis.get("assistant_reply") or "").strip()
-    if assistant_reply:
-        return html.escape(assistant_reply)
-    return _build_follow_up_message(
-        analysis.get("follow_up_questions", [])
-    )
-
-
 @app.post("/webhook")
-async def telegram_webhook(
-    request: Request,
-):
+async def telegram_webhook(request: Request):
     data = await request.json()
     message = data.get("message", {})
     chat = message.get("chat", {})
@@ -93,128 +73,21 @@ async def telegram_webhook(
         }
 
     if text == "/start":
-        conversation_store.clear(chat_id)
+        screenbuddy_agent.reset(chat_id)
         send_telegram_message(
             chat_id,
             (
-                "Hi! I'm <b>ScreenBuddy</b>\n\n"
-                "Tell me how you feel and what kind of movie or series fits today.\n\n"
-                "Examples:\n"
-                "<code>I had a very exhausting day, I want something light</code>\n\n"
-                "<code>I'm bored and want something exciting</code>\n\n"
-                "<code>I feel sad, maybe something comforting</code>"
+                "Hi, I'm <b>ScreenBuddy</b>. Tell me a little about the kind "
+                "of night you're having, and I'll help you find something "
+                "that fits."
             ),
         )
         return {"ok": True}
 
-    pending_state = conversation_store.get(chat_id)
-    if pending_state:
-        conversation_messages = pending_state[
-            "conversation_messages"
-        ] + [text]
-        original_message = pending_state[
-            "original_message"
-        ]
-        follow_up_count = pending_state.get(
-            "follow_up_count",
-            0,
-        )
-        started_with_greeting = pending_state.get(
-            "started_with_greeting",
-            False,
-        )
-    else:
-        conversation_messages = [text]
-        original_message = text
-        follow_up_count = 0
-        started_with_greeting = is_greeting_only_message(text)
-
-    if started_with_greeting and len(conversation_messages) == 1:
-        analysis_input = text
-    else:
-        analysis_input = combine_conversation_messages(
-            conversation_messages
-        )
-    analysis = analyze_user_state(analysis_input)
-
-    if started_with_greeting and len(conversation_messages) == 1:
-        conversation_store.set(
-            chat_id=chat_id,
-            original_message=original_message,
-            conversation_messages=conversation_messages,
-            analysis=analysis,
-            follow_up_count=1,
-            started_with_greeting=True,
-        )
-        send_telegram_message(
-            chat_id,
-            _build_assistant_reply(analysis),
-        )
-        return {"ok": True}
-
-    if (
-        analysis["needs_follow_up"]
-        and follow_up_count < MAX_CONVERSATIONAL_FOLLOW_UPS
-    ):
-        conversation_store.set(
-            chat_id=chat_id,
-            original_message=original_message,
-            conversation_messages=conversation_messages,
-            analysis=analysis,
-            follow_up_count=follow_up_count + 1,
-            started_with_greeting=started_with_greeting,
-        )
-        send_telegram_message(
-            chat_id,
-            _build_assistant_reply(analysis),
-        )
-        return {"ok": True}
-
-    conversation_store.clear(chat_id)
-
-    recommendation_context = combine_conversation_messages(
-        conversation_messages
+    agent_response = screenbuddy_agent.handle_message(
+        chat_id=chat_id,
+        text=text,
     )
-    parsed_query = build_search_query_from_user_state(
-        user_state=analysis["user_state"],
-        original_text=recommendation_context,
-    )
-
-    debug_message = (
-        "DEBUG - User State\n"
-        f"<code>{html.escape(str(analysis['user_state']))}</code>\n\n"
-        "DEBUG - Search Query\n"
-        f"<code>{html.escape(str(parsed_query))}</code>\n\n"
-    )
-
-    recommendations = search_titles(
-        user_query=recommendation_context,
-        parsed_query=parsed_query,
-        df=df,
-        vectorizer=vectorizer,
-        tfidf_matrix=tfidf_matrix,
-        top_n=TOP_N,
-        min_similarity=MIN_SIMILARITY,
-    )
-
-    llm_explanation = (
-        generate_recommendation_explanation(
-            user_query=recommendation_context,
-            parsed_query=parsed_query,
-            recommendations=recommendations,
-        )
-    )
-
-    response_message = debug_message + (
-        format_recommendations_message(
-            recommendations=recommendations,
-            llm_explanation=llm_explanation,
-        )
-    )
-
-    send_telegram_message(
-        chat_id,
-        response_message,
-    )
-
+    send_telegram_message(chat_id, agent_response.message)
     return {"ok": True}
+

@@ -225,33 +225,33 @@ def _build_human_follow_up_question(
     complexity = user_state.get("content_complexity")
 
     if greeting_only:
-        return "Hello! What are you in the mood to watch tonight?"
+        return "Hey, how are you? Want to watch something?"
 
     if field == "mood":
         if viewing_intent == "unknown":
-            return "What kind of mood are you in tonight?"
-        return "Got it. How are you feeling right now?"
+            return "How was your day today?"
+        return "Got it. Long day or pretty chill one?"
 
     if field == "viewing_intent":
         if mood == "tired":
             return "Got it. Do you want something comforting, funny, or a bit more exciting?"
         if mood == "sad":
             return "Do you want something comforting, funny, or more distracting?"
-        return "What sounds better right now: something comforting, funny, or exciting?"
+        return "Do you want something that lifts you up, distracts you, or just keeps you company?"
 
     if field == "content_complexity":
         if mood in {"tired", "stressed"}:
             return "Got it. Want something light and easy, or are you okay with something a bit deeper?"
-        return "Do you want something light and easy, or something a bit deeper?"
+        return "Are you in the mood for easy comfort or something that grabs your brain a bit?"
 
     if field == "preferred_length":
         if complexity == "low":
             return "Nice. Do you want a quick watch or something longer?"
         if complexity == "high":
             return "Okay. Are you up for a quick watch or something you can sink into?"
-        return "Do you want a quick watch or something longer?"
+        return "Do you want a quick watch or something you can settle into?"
 
-    return "What sounds good to you right now?"
+    return "What do you want to feel after watching something tonight?"
 
 
 def _normalize_result(
@@ -307,7 +307,7 @@ def _normalize_result(
                 )
             ]
 
-    if not assistant_reply and follow_up_questions:
+    if needs_follow_up and follow_up_questions:
         assistant_reply = follow_up_questions[0]
 
     result["user_state"] = user_state
@@ -343,8 +343,15 @@ def _heuristic_state(text: str) -> Dict[str, Any]:
         user_state["mood"] = "happy"
         user_state["viewing_intent"] = "laugh"
         user_state["energy_level"] = "high"
-    elif any(word in lowered for word in ["don't know", "do not know", "whatever"]):
+    elif any(word in lowered for word in ["don't know", "do not know", "whatever", "idk"]):
         user_state["mood"] = "neutral"
+
+    if any(
+        phrase in lowered
+        for phrase in ["help me find", "find something", "recommend", "what should i watch"]
+    ):
+        if user_state["mood"] == "unknown":
+            user_state["mood"] = "neutral"
 
     if any(word in lowered for word in ["light", "easy", "simple", "not heavy"]):
         user_state["content_complexity"] = "low"
@@ -356,7 +363,7 @@ def _heuristic_state(text: str) -> Dict[str, Any]:
     elif any(word in lowered for word in ["long", "epic", "binge"]):
         user_state["preferred_length"] = "long"
 
-    if any(word in lowered for word in ["funny", "laugh", "comedy"]):
+    if any(word in lowered for word in ["fun", "funny", "laugh", "comedy"]):
         user_state["viewing_intent"] = "laugh"
     elif any(word in lowered for word in ["comfort", "warm", "heartwarming"]):
         user_state["viewing_intent"] = "feel_comforted"
@@ -454,6 +461,7 @@ def build_search_query_from_user_state(
     mood = user_state.get("mood")
     viewing_intent = user_state.get("viewing_intent")
     content_complexity = user_state.get("content_complexity")
+    energy_level = user_state.get("energy_level")
 
     if mood and mood != "unknown":
         query_parts.append(mood)
@@ -465,6 +473,10 @@ def build_search_query_from_user_state(
         query_parts.append("deep thoughtful story")
     elif content_complexity == "medium":
         query_parts.append("balanced engaging story")
+    if energy_level == "low":
+        query_parts.append("low energy")
+    elif energy_level == "high":
+        query_parts.append("energetic")
 
     for item in user_state.get("avoid", []):
         query_parts.append(f"not {item}")
