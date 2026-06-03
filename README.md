@@ -8,10 +8,11 @@ The Telegram/FastAPI transport is intentionally thin. Conversation behavior live
 
 - `agent/screenbuddy_agent.py` controls the agent loop.
 - `agent/conversation_state.py` stores session memory and structured watch intent.
+- `agent/dialogue_generator.py` generates most user-facing dialogue from structured conversation context.
 - `agent/state_extractor.py` maps conversation text into preference state.
 - `agent/policy.py` decides whether to ask one follow-up or recommend.
 - `agent/search_intent_builder.py` converts state into a search intent.
-- `agent/recommendation_ranker.py` ranks and formats personalized recommendations.
+- `agent/recommendation_ranker.py` ranks catalog recommendations.
 - `agent/feedback_handler.py` updates state from post-recommendation feedback.
 
 Existing catalog loading and TF-IDF search remain in `services/`. The agent wraps `services/search_engine.py` instead of replacing the working search integration.
@@ -20,12 +21,12 @@ Existing catalog loading and TF-IDF search remain in `services/`. The agent wrap
 
 ScreenBuddy should:
 
-- greet warmly: `Hey, how are you? Want to watch something?`
+- greet warmly with generated natural dialogue
 - ask at most one lightweight follow-up at a time
 - infer mood, energy, desired feeling, intensity tolerance, genre hints, runtime hints, and avoidances from casual language
 - search once it has a weak emotional signal plus at least one preference, constraint, or inferred direction
-- give recommendations with a short personal reason and vibe
-- ask `Do these feel right, or should I tune the search?`
+- give recommendations with generated, catalog-grounded explanation
+- always ask whether recommendations feel right
 - refine from feedback like `not it`, `too heavy`, or `I wanted something more fun` without restarting the session
 
 Telegram commands:
@@ -58,15 +59,15 @@ uvicorn app:app --reload
 
 Optional environment variables:
 
-- `OPENAI_API_KEY` enables LLM-based state extraction and recommendation explanation.
+- `OPENAI_API_KEY` enables LLM-based state extraction and dialogue generation.
 - `OPENAI_MODEL` defaults to `gpt-4o-mini`.
 - `TELEGRAM_BOT_TOKEN` enables outbound Telegram replies.
 
-Without `OPENAI_API_KEY`, ScreenBuddy uses deterministic heuristic extraction so tests and local development still work.
+Without `OPENAI_API_KEY`, ScreenBuddy uses deterministic heuristic extraction and centralized fallback dialogue so tests and local development still work.
 
 ## Tradeoffs
 
 - Session memory is in process. This is simple and testable, but it will reset on deploy/restart and should move to durable storage for production.
 - `/start` and `/new` both clear the same in-memory session keyed by Telegram `chat_id`; there is no durable multi-session history yet.
-- The search integration still uses the existing TF-IDF catalog engine. The refactor adds intent building, ranking, and conversational control around it rather than introducing a heavier retrieval stack.
-- State extraction keeps the existing legacy analyzer API for compatibility while the new agent package provides the cleaner product architecture.
+- The search integration still uses the existing TF-IDF catalog engine. The refactor adds LLM dialogue, intent building, ranking, and conversational control around it rather than introducing a heavier retrieval stack.
+- State extraction is structured-only; user-facing copy belongs to the dialogue generator.

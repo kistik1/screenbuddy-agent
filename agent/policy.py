@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from agent.conversation_state import ConversationSession
-from agent.state_extractor import is_greeting_only_message
 
 
-MAX_AGENT_FOLLOW_UPS = 2
+MAX_AGENT_FOLLOW_UPS = 3
+FollowUpTarget = Literal[
+    "mood",
+    "viewing_intent",
+    "content_complexity",
+    "preferred_length",
+    "genre_or_constraint",
+]
 
 
 def should_recommend(session: ConversationSession) -> bool:
@@ -18,37 +26,18 @@ def should_recommend(session: ConversationSession) -> bool:
     return False
 
 
-def next_follow_up(session: ConversationSession, latest_message: str) -> str:
+def next_follow_up_target(
+    session: ConversationSession,
+) -> FollowUpTarget:
     state = session.user_state
-    lowered = latest_message.lower().strip()
 
-    if len(session.messages) == 1 and is_greeting_only_message(latest_message):
-        return "Hey, how are you? Want to watch something?"
-
-    if any(
-        phrase in lowered
-        for phrase in (
-            "help me find",
-            "find something",
-            "what should i watch",
-            "recommend",
-        )
-    ) and not state.has_directional_signal():
-        return "I'd be happy to find something for you. How was your day today?"
-
-    if not state.has_emotional_signal():
-        return (
-            "Do you want something that lifts you up, distracts you, "
-            "or just keeps you company?"
-        )
+    if not state.has_emotional_signal() or state.desired_feeling == "unknown":
+        return "viewing_intent"
 
     if state.intensity_tolerance == "unknown":
-        return (
-            "Are you in the mood for easy comfort or something that grabs "
-            "your brain a bit?"
-        )
+        return "content_complexity"
 
     if not state.genres and state.runtime_preference == "unknown":
-        return "Got it. More cozy-funny, or more exciting-fun?"
+        return "preferred_length"
 
-    return "What should I steer toward or away from?"
+    return "genre_or_constraint"

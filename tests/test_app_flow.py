@@ -1,8 +1,9 @@
-import importlib
+﻿import importlib
 
 from fastapi.testclient import TestClient
 
 from agent.conversation_state import ConversationSessionStore
+from agent.dialogue_generator import DialogueContext
 from agent.screenbuddy_agent import ScreenBuddyAgent
 from services import user_state_analyzer as analyzer
 
@@ -27,20 +28,38 @@ def _recommendation(title="Calm Movie"):
     }
 
 
-def _agent(search_calls):
+def _agent(search_calls, recommendations=None):
     def fake_search(**kwargs):
         search_calls.append(kwargs["parsed_query"])
-        return [_recommendation()]
+        if recommendations is None:
+            return [_recommendation()]
+        return recommendations
+
+    def fake_dialogue(context: DialogueContext):
+        if context.phase == "recommendations":
+            titles = ", ".join(
+                item["title"] for item in context.recommendations
+            )
+            return f"Try {titles}. Do these feel right?"
+        if context.phase == "no_results":
+            return "Generated no-results refinement?"
+        if context.phase == "feedback_clarification":
+            return "What felt off about them?"
+        if context.phase == "greeting":
+            return "Warm generated greeting?"
+        if context.phase == "discovery_follow_up":
+            return f"Generated follow-up for {context.follow_up_target}?"
+        return f"Generated {context.phase}?"
 
     return ScreenBuddyAgent(
         store=ConversationSessionStore(),
         search_fn=fake_search,
-        explanation_fn=lambda **kwargs: "This fits the easy comfort you described.",
         search_context={
             "df": object(),
             "vectorizer": object(),
             "tfidf_matrix": object(),
         },
+        dialogue_fn=fake_dialogue,
     )
 
 
@@ -51,7 +70,7 @@ def test_agent_greeting_invites_natural_conversation(monkeypatch):
 
     response = agent.handle_message(123, "Hello")
 
-    assert response.message == "Hey, how are you? Want to watch something?"
+    assert response.message == "Warm generated greeting?"
     assert response.searched is False
     assert search_calls == []
 
@@ -66,9 +85,7 @@ def test_agent_discovery_asks_one_warm_follow_up(monkeypatch):
         "Help me find something to watch",
     )
 
-    assert response.message == (
-        "I'd be happy to find something for you. How was your day today?"
-    )
+    assert response.message == "Generated follow-up for viewing_intent?"
     assert response.searched is False
     assert search_calls == []
 
@@ -91,6 +108,23 @@ def test_agent_recommends_after_enough_context(monkeypatch):
     assert "funny" in search_calls[0]["query_text"]
 
 
+def test_agent_no_results_asks_generated_refinement(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls, recommendations=[])
+
+    response = agent.handle_message(
+        123,
+        "I had a long day and want something light and funny",
+    )
+    session = agent.store.get(123)
+
+    assert response.searched is True
+    assert response.message == "Generated no-results refinement?"
+    assert session is not None
+    assert session.awaiting_feedback is False
+
+
 def test_agent_negative_feedback_asks_refinement_without_restart(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
     search_calls = []
@@ -102,9 +136,7 @@ def test_agent_negative_feedback_asks_refinement_without_restart(monkeypatch):
     )
     response = agent.handle_message(123, "No, not it")
 
-    assert response.message == (
-        "Got it — was it too heavy, too boring, or just the wrong vibe?"
-    )
+    assert response.message == "What felt off about them?"
     assert len(search_calls) == 1
 
 
@@ -243,6 +275,11 @@ def test_webhook_start_resets_session_and_sends_onboarding(monkeypatch):
 
     monkeypatch.setattr(
         app_module,
+        "generate_dialogue",
+        lambda context: f"Generated {context.phase}",
+    )
+    monkeypatch.setattr(
+        app_module,
         "send_telegram_message",
         lambda chat_id, text: sent_messages.append((chat_id, text)) or True,
     )
@@ -259,7 +296,7 @@ def test_webhook_start_resets_session_and_sends_onboarding(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert sent_messages == [(456, app_module.START_MESSAGE)]
+    assert sent_messages == [(456, "Generated greeting")]
     assert app_module.screenbuddy_agent.store.get(456) is None
 
 
@@ -273,6 +310,11 @@ def test_webhook_new_resets_session_and_sends_new_session_copy(
 
     sent_messages = []
 
+    monkeypatch.setattr(
+        app_module,
+        "generate_dialogue",
+        lambda context: f"Generated {context.phase}",
+    )
     monkeypatch.setattr(
         app_module.screenbuddy_agent,
         "handle_message",
@@ -298,7 +340,7 @@ def test_webhook_new_resets_session_and_sends_new_session_copy(
     )
 
     assert response.status_code == 200
-    assert sent_messages == [(456, app_module.NEW_SESSION_MESSAGE)]
+    assert sent_messages == [(456, "Generated session_reset")]
     assert app_module.screenbuddy_agent.store.get(456) is None
 
 
@@ -309,6 +351,11 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
 
     sent_messages = []
 
+    monkeypatch.setattr(
+        app_module,
+        "generate_dialogue",
+        lambda context: f"Generated {context.phase}",
+    )
     monkeypatch.setattr(
         app_module.screenbuddy_agent,
         "handle_message",
@@ -334,6 +381,7 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert sent_messages == [(456, app_module.HELP_MESSAGE)]
+    assert sent_messages == [(456, "Generated help")]
     assert app_module.screenbuddy_agent.store.get(456) is session
     assert session.messages == ["keep me"]
+

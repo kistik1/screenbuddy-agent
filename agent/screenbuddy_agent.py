@@ -7,16 +7,17 @@ from agent.conversation_state import (
     ConversationSessionStore,
     WatchSearchIntent,
 )
+from agent.dialogue_generator import (
+    DialogueContext,
+    DialogueFn,
+    generate_dialogue,
+)
 from agent.feedback_handler import (
     apply_feedback,
-    feedback_refinement_question,
     is_negative_feedback,
 )
-from agent.policy import next_follow_up, should_recommend
-from agent.recommendation_ranker import (
-    format_personal_recommendations,
-    rank_recommendations,
-)
+from agent.policy import next_follow_up_target, should_recommend
+from agent.recommendation_ranker import rank_recommendations
 from agent.search_intent_builder import build_watch_search_intent
 from agent.state_extractor import extract_state, is_greeting_only_message
 
@@ -37,14 +38,16 @@ class ScreenBuddyAgent:
         self,
         store: ConversationSessionStore,
         search_fn: SearchFn,
-        explanation_fn: ExplanationFn,
         search_context: Dict[str, Any],
+        explanation_fn: ExplanationFn | None = None,
+        dialogue_fn: DialogueFn = generate_dialogue,
         top_n: int = 3,
         min_similarity: float = 0.2,
     ) -> None:
         self.store = store
         self.search_fn = search_fn
         self.explanation_fn = explanation_fn
+        self.dialogue_fn = dialogue_fn
         self.search_context = search_context
         self.top_n = top_n
         self.min_similarity = min_similarity
@@ -64,7 +67,13 @@ class ScreenBuddyAgent:
             session.follow_up_count += 1
             self.store.set(session)
             return AgentResponse(
-                message="Hey, how are you? Want to watch something?"
+                message=self.dialogue_fn(
+                    DialogueContext(
+                        phase="greeting",
+                        latest_user_message=clean_text,
+                        session=session,
+                    )
+                )
             )
 
         if session.awaiting_feedback:
@@ -74,7 +83,15 @@ class ScreenBuddyAgent:
             if is_negative_feedback(clean_text):
                 session.awaiting_feedback = False
                 self.store.set(session)
-                return AgentResponse(message=feedback_refinement_question())
+                return AgentResponse(
+                    message=self.dialogue_fn(
+                        DialogueContext(
+                            phase="feedback_clarification",
+                            latest_user_message=clean_text,
+                            session=session,
+                        )
+                    )
+                )
 
         extracted = extract_state(clean_text, session.conversation_text())
         session.user_state.merge(extracted)
@@ -85,7 +102,14 @@ class ScreenBuddyAgent:
         session.follow_up_count += 1
         self.store.set(session)
         return AgentResponse(
-            message=next_follow_up(session, clean_text)
+            message=self.dialogue_fn(
+                DialogueContext(
+                    phase="discovery_follow_up",
+                    latest_user_message=clean_text,
+                    session=session,
+                    follow_up_target=next_follow_up_target(session),
+                )
+            )
         )
 
     def _recommend(self, session) -> AgentResponse:
@@ -102,19 +126,21 @@ class ScreenBuddyAgent:
             **self.search_context,
         )
         ranked = rank_recommendations(recommendations, intent)
-        explanation = self.explanation_fn(
-            user_query=session.conversation_text(),
-            parsed_query=parsed_query,
-            recommendations=ranked,
-        )
-        message = format_personal_recommendations(
-            recommendations=ranked,
-            intent=intent,
-            llm_explanation=explanation,
+        phase = "recommendations" if ranked else "no_results"
+        message = self.dialogue_fn(
+            DialogueContext(
+                phase=phase,
+                latest_user_message=(
+                    session.messages[-1] if session.messages else ""
+                ),
+                session=session,
+                intent=intent,
+                recommendations=ranked,
+            )
         )
         session.last_intent = intent
         session.last_recommendations = ranked
-        session.awaiting_feedback = True
+        session.awaiting_feedback = bool(ranked)
         self.store.set(session)
         return AgentResponse(
             message=message,

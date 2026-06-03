@@ -92,10 +92,6 @@ def extract_filter_refinements(message: str) -> dict[str, object]:
     return updates
 
 
-def feedback_refinement_question() -> str:
-    return "Got it — was it too heavy, too boring, or just the wrong vibe?"
-
-
 def _append_once(values: list[str], value: str) -> list[str]:
     if value not in values:
         return values + [value]

@@ -45,9 +45,7 @@ def test_analyze_user_state_skips_follow_up_when_confident(
                 "confidence": 0.88,
                 "missing_info": []
               },
-              "needs_follow_up": false,
-              "assistant_reply": "",
-              "follow_up_questions": []
+              "needs_follow_up": false
             }
             """
         ),
@@ -60,7 +58,7 @@ def test_analyze_user_state_skips_follow_up_when_confident(
     assert result["user_state"]["mood"] == "tired"
     assert result["user_state"]["viewing_intent"] == "relax"
     assert result["needs_follow_up"] is False
-    assert result["follow_up_questions"] == []
+    assert "follow_up_questions" not in result
 
 
 def test_analyze_user_state_normalizes_and_limits_questions(
@@ -87,13 +85,7 @@ def test_analyze_user_state_normalizes_and_limits_questions(
                   "avoid"
                 ]
               },
-              "needs_follow_up": true,
-              "assistant_reply": "What genre do you want?",
-              "follow_up_questions": [
-                "Q1",
-                "Q2",
-                "Q3"
-              ]
+              "needs_follow_up": true
             }
             """
         ),
@@ -108,13 +100,7 @@ def test_analyze_user_state_normalizes_and_limits_questions(
     assert result["user_state"]["confidence"] == 1.0
     assert result["user_state"]["avoid"] == ["heavy"]
     assert result["needs_follow_up"] is True
-    assert result["assistant_reply"] == (
-        "Do you want something that lifts you up, distracts you, or just keeps you company?"
-    )
-    assert len(result["follow_up_questions"]) == 1
-    assert result["follow_up_questions"][0].startswith(
-        "Do you want something that lifts you up"
-    )
+    assert result["user_state"]["missing_info"][0] == "viewing_intent"
 
 
 def test_analyze_user_state_uses_heuristic_fallback(
@@ -130,7 +116,7 @@ def test_analyze_user_state_uses_heuristic_fallback(
     assert result["user_state"]["energy_level"] == "medium"
 
 
-def test_analyze_user_state_asks_one_human_question_for_tired_user(
+def test_analyze_user_state_marks_tired_user_as_needing_follow_up(
     monkeypatch,
 ):
     monkeypatch.setattr(analyzer, "client", None)
@@ -138,15 +124,10 @@ def test_analyze_user_state_asks_one_human_question_for_tired_user(
     result = analyzer.analyze_user_state("I'm tired")
 
     assert result["needs_follow_up"] is True
-    assert result["assistant_reply"] == (
-        "Got it. Want something light and easy, or are you okay with something a bit deeper?"
-    )
-    assert result["follow_up_questions"] == [
-        "Got it. Want something light and easy, or are you okay with something a bit deeper?"
-    ]
+    assert "content_complexity" in result["user_state"]["missing_info"]
 
 
-def test_analyze_user_state_greeting_only_gets_warm_reply(
+def test_analyze_user_state_greeting_only_needs_follow_up(
     monkeypatch,
 ):
     monkeypatch.setattr(analyzer, "client", None)
@@ -154,9 +135,6 @@ def test_analyze_user_state_greeting_only_gets_warm_reply(
     result = analyzer.analyze_user_state("Hello!")
 
     assert result["needs_follow_up"] is True
-    assert result["assistant_reply"] == (
-        "Hey, how are you? Want to watch something?"
-    )
     assert result["user_state"]["mood"] == "unknown"
 
 
@@ -179,9 +157,7 @@ def test_analyze_user_state_does_not_require_avoid_question(
                 "confidence": 0.82,
                 "missing_info": []
               },
-              "needs_follow_up": false,
-              "assistant_reply": "",
-              "follow_up_questions": []
+              "needs_follow_up": false
             }
             """
         ),
@@ -192,7 +168,7 @@ def test_analyze_user_state_does_not_require_avoid_question(
     )
 
     assert result["needs_follow_up"] is False
-    assert result["follow_up_questions"] == []
+    assert "follow_up_questions" not in result
 
 
 def test_build_search_query_from_user_state():

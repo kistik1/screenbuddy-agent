@@ -1,4 +1,3 @@
-import time
 from typing import Any, Dict, List
 
 from services.llm_service import (
@@ -10,7 +9,6 @@ from services.llm_service import (
 
 
 MAX_RUNTIME_FOLLOW_UP_QUESTIONS = 1
-MAX_ALLOWED_FOLLOW_UP_QUESTIONS = 3
 FOLLOW_UP_THRESHOLD = 0.75
 KEY_FIELDS = ("mood", "viewing_intent")
 GREETING_ONLY_PHRASES = {
@@ -83,8 +81,6 @@ DEFAULT_USER_STATE = {
 DEFAULT_ANALYZER_RESULT = {
     "user_state": DEFAULT_USER_STATE.copy(),
     "needs_follow_up": True,
-    "assistant_reply": "",
-    "follow_up_questions": [],
 }
 
 
@@ -134,10 +130,6 @@ def _clamp_confidence(value: Any) -> float:
     if confidence > 1.0:
         return 1.0
     return round(confidence, 2)
-
-
-def _normalize_assistant_reply(value: Any) -> str:
-    return str(value or "").strip()
 
 
 def _clean_text(text: str) -> str:
@@ -201,64 +193,12 @@ def _should_ask_follow_up(
     )
 
 
-def _select_follow_up_field(
-    user_state: Dict[str, Any],
-    missing_info: List[str],
-) -> str | None:
-    for field in FOLLOW_UP_PRIORITY:
-        if field not in missing_info:
-            continue
-        if field == "preferred_length":
-            if user_state.get("content_complexity") == "unknown":
-                continue
-        return field
-    return None
-
-
-def _build_human_follow_up_question(
-    user_state: Dict[str, Any],
-    field: str | None,
-    greeting_only: bool = False,
-) -> str:
-    mood = user_state.get("mood")
-    viewing_intent = user_state.get("viewing_intent")
-    complexity = user_state.get("content_complexity")
-
-    if greeting_only:
-        return "Hey, how are you? Want to watch something?"
-
-    if field == "mood":
-        if viewing_intent == "unknown":
-            return "How was your day today?"
-        return "Got it. Long day or pretty chill one?"
-
-    if field == "viewing_intent":
-        if mood == "tired":
-            return "Got it. Do you want something comforting, funny, or a bit more exciting?"
-        if mood == "sad":
-            return "Do you want something comforting, funny, or more distracting?"
-        return "Do you want something that lifts you up, distracts you, or just keeps you company?"
-
-    if field == "content_complexity":
-        if mood in {"tired", "stressed"}:
-            return "Got it. Want something light and easy, or are you okay with something a bit deeper?"
-        return "Are you in the mood for easy comfort or something that grabs your brain a bit?"
-
-    if field == "preferred_length":
-        if complexity == "low":
-            return "Nice. Do you want a quick watch or something longer?"
-        if complexity == "high":
-            return "Okay. Are you up for a quick watch or something you can sink into?"
-        return "Do you want a quick watch or something you can settle into?"
-
-    return "What do you want to feel after watching something tonight?"
-
-
 def _normalize_result(
     raw_result: Dict[str, Any],
     max_follow_up_questions: int,
     greeting_only: bool = False,
 ) -> Dict[str, Any]:
+    del max_follow_up_questions
     result = DEFAULT_ANALYZER_RESULT.copy()
     user_state = DEFAULT_USER_STATE.copy()
     user_state.update(raw_result.get("user_state", {}))
@@ -276,46 +216,8 @@ def _normalize_result(
     if greeting_only:
         needs_follow_up = True
 
-    follow_up_questions = []
-    assistant_reply = _normalize_assistant_reply(
-        raw_result.get("assistant_reply")
-    )
-    if needs_follow_up:
-        cap = min(
-            max_follow_up_questions,
-            MAX_RUNTIME_FOLLOW_UP_QUESTIONS,
-            MAX_ALLOWED_FOLLOW_UP_QUESTIONS,
-        )
-        follow_up_field = _select_follow_up_field(
-            user_state,
-            user_state["missing_info"],
-        )
-        if follow_up_field and cap > 0:
-            follow_up_questions = [
-                _build_human_follow_up_question(
-                    user_state,
-                    follow_up_field,
-                    greeting_only=greeting_only,
-                )
-            ]
-        elif greeting_only and cap > 0:
-            follow_up_questions = [
-                _build_human_follow_up_question(
-                    user_state,
-                    None,
-                    greeting_only=True,
-                )
-            ]
-
-    if needs_follow_up and follow_up_questions:
-        assistant_reply = follow_up_questions[0]
-
     result["user_state"] = user_state
-    result["needs_follow_up"] = bool(
-        needs_follow_up and assistant_reply
-    )
-    result["assistant_reply"] = assistant_reply
-    result["follow_up_questions"] = follow_up_questions
+    result["needs_follow_up"] = bool(needs_follow_up)
     return result
 
 
@@ -498,38 +400,3 @@ def build_search_query_from_user_state(
         "type": None,
     }
 
-
-class PendingConversationStore:
-    def __init__(self) -> None:
-        self._store: Dict[int, Dict[str, Any]] = {}
-
-    def get(self, chat_id: int) -> Dict[str, Any] | None:
-        return self._store.get(chat_id)
-
-    def set(
-        self,
-        chat_id: int,
-        original_message: str,
-        conversation_messages: List[str],
-        analysis: Dict[str, Any],
-        follow_up_count: int,
-        started_with_greeting: bool,
-    ) -> None:
-        self._store[chat_id] = {
-            "original_message": original_message,
-            "conversation_messages": conversation_messages,
-            "analysis": analysis,
-            "follow_up_count": follow_up_count,
-            "started_with_greeting": started_with_greeting,
-            "updated_at": time.time(),
-        }
-
-    def clear(self, chat_id: int) -> None:
-        self._store.pop(chat_id, None)
-
-
-def combine_conversation_messages(messages: List[str]) -> str:
-    return "\n".join(
-        f"User message {index}: {message}"
-        for index, message in enumerate(messages, start=1)
-    )

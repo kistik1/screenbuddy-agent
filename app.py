@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Request
 
 from agent.conversation_state import ConversationSessionStore
+from agent.dialogue_generator import DialogueContext, generate_dialogue
 from agent.screenbuddy_agent import ScreenBuddyAgent
 from services.catalog_loader import load_catalog
-from services.llm_service import generate_recommendation_explanation
 from services.search_engine import search_titles
 from services.telegram_service import send_telegram_message
 
@@ -14,30 +14,12 @@ app = FastAPI()
 TOP_N = 3
 MIN_SIMILARITY = 0.2
 
-START_MESSAGE = (
-    "Hi, I'm <b>ScreenBuddy</b>. Tell me a little about the kind "
-    "of night you're having, and I'll help you find something "
-    "that fits."
-)
-
-NEW_SESSION_MESSAGE = (
-    "Started a new session. Tell me what kind of mood you're in, "
-    "and I'll find something that fits."
-)
-
-HELP_MESSAGE = (
-    "Tell me how you're feeling or what vibe you want to watch. "
-    "Use /new to start over, and reply normally if you want me to "
-    "refine the recommendations."
-)
-
 
 df, vectorizer, tfidf_matrix = load_catalog()
 conversation_store = ConversationSessionStore()
 screenbuddy_agent = ScreenBuddyAgent(
     store=conversation_store,
     search_fn=search_titles,
-    explanation_fn=generate_recommendation_explanation,
     search_context={
         "df": df,
         "vectorizer": vectorizer,
@@ -91,16 +73,25 @@ async def telegram_webhook(request: Request):
 
     if text == "/start":
         screenbuddy_agent.reset(chat_id)
-        send_telegram_message(chat_id, START_MESSAGE)
+        send_telegram_message(
+            chat_id,
+            generate_dialogue(DialogueContext(phase="greeting")),
+        )
         return {"ok": True}
 
     if text == "/new":
         screenbuddy_agent.reset(chat_id)
-        send_telegram_message(chat_id, NEW_SESSION_MESSAGE)
+        send_telegram_message(
+            chat_id,
+            generate_dialogue(DialogueContext(phase="session_reset")),
+        )
         return {"ok": True}
 
     if text == "/help":
-        send_telegram_message(chat_id, HELP_MESSAGE)
+        send_telegram_message(
+            chat_id,
+            generate_dialogue(DialogueContext(phase="help")),
+        )
         return {"ok": True}
 
     agent_response = screenbuddy_agent.handle_message(
