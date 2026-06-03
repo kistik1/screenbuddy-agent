@@ -20,6 +20,8 @@ from agent.policy import next_follow_up_target, should_recommend
 from agent.recommendation_ranker import rank_recommendations
 from agent.search_intent_builder import build_watch_search_intent
 from agent.state_extractor import extract_state, is_greeting_only_message
+from agent.topic_router import classify_message_topic
+from services.session_intent_analyzer import classify_feedback_intent
 
 
 SearchFn = Callable[..., List[Dict[str, Any]]]
@@ -58,6 +60,22 @@ class ScreenBuddyAgent:
     def handle_message(self, chat_id: int, text: str) -> AgentResponse:
         clean_text = text.strip()
         session = self.store.get_or_create(chat_id)
+
+        topic_classification = classify_message_topic(
+            clean_text,
+            awaiting_feedback=session.awaiting_feedback,
+        )
+        if topic_classification == "off_topic":
+            return AgentResponse(
+                message=self.dialogue_fn(
+                    DialogueContext(
+                        phase="off_topic",
+                        latest_user_message=clean_text,
+                        session=session,
+                    )
+                )
+            )
+
         session.add_message(clean_text)
 
         if (
@@ -77,6 +95,14 @@ class ScreenBuddyAgent:
             )
 
         if session.awaiting_feedback:
+            feedback_intent = classify_feedback_intent(
+                clean_text,
+                session.conversation_text(),
+            )
+            if feedback_intent == "accepted":
+                self.store.clear(chat_id)
+                return AgentResponse(message="Good watching time.")
+
             changed = apply_feedback(session, clean_text)
             if changed:
                 return self._recommend(session)

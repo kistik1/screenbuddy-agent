@@ -15,6 +15,7 @@ DialoguePhase = Literal[
     "recommendations",
     "no_results",
     "feedback_clarification",
+    "off_topic",
     "session_reset",
     "help",
 ]
@@ -88,6 +89,9 @@ def _build_payload(context: DialogueContext) -> Dict[str, Any]:
                 context.phase == "recommendations"
             ),
             "do_not_invent_catalog_facts": True,
+            "off_topic_must_redirect_to_watch_choices": (
+                context.phase == "off_topic"
+            ),
         },
     }
 
@@ -128,6 +132,8 @@ def _fallback_dialogue(context: DialogueContext) -> str:
         return "Tell me what you feel like watching, or how your day has been. I will ask one question at a time and then recommend a few picks."
     if context.phase == "feedback_clarification":
         return "Got it. What felt off about them?"
+    if context.phase == "off_topic":
+        return "I am ScreenBuddy, so I can help you choose something to watch. Tell me what kind of mood or night you are in, and I will find a movie or show that fits."
     if context.phase == "no_results":
         return "I am not finding a strong match yet. Should I make it lighter, funnier, cozier, or more exciting?"
     if context.phase == "recommendations":

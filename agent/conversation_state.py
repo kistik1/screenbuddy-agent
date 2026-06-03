@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 
 EnergyLevel = Literal["low", "medium", "high", "unknown"]
@@ -152,23 +152,48 @@ class ConversationSession:
 
 
 class ConversationSessionStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int = 300,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self._sessions: Dict[int, ConversationSession] = {}
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds > 0
+            else 300
+        )
+        self._clock = clock
 
     def get_or_create(self, chat_id: int) -> ConversationSession:
-        if chat_id not in self._sessions:
-            self._sessions[chat_id] = ConversationSession(chat_id=chat_id)
-        return self._sessions[chat_id]
+        session = self._sessions.get(chat_id)
+        if session and self._is_expired(session):
+            self.clear(chat_id)
+            session = None
+
+        if session is None:
+            session = ConversationSession(
+                chat_id=chat_id,
+                updated_at=self._clock(),
+            )
+            self._sessions[chat_id] = session
+        return session
 
     def get(self, chat_id: int) -> Optional[ConversationSession]:
         return self._sessions.get(chat_id)
 
     def set(self, session: ConversationSession) -> None:
-        session.updated_at = time.time()
+        session.updated_at = self._clock()
         self._sessions[session.chat_id] = session
 
     def clear(self, chat_id: int) -> None:
         self._sessions.pop(chat_id, None)
+
+    def _is_expired(self, session: ConversationSession) -> bool:
+        return (
+            self._clock() - session.updated_at
+            > self.timeout_seconds
+        )
 
 
 def _merge_unique(existing: List[str], incoming: List[str]) -> List[str]:

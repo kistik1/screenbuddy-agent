@@ -62,6 +62,7 @@ Optional environment variables:
 - `OPENAI_API_KEY` enables LLM-based state extraction and dialogue generation.
 - `OPENAI_MODEL` defaults to `gpt-4o-mini`.
 - `TELEGRAM_BOT_TOKEN` enables outbound Telegram replies.
+- `SCREENBUDDY_SESSION_TIMEOUT_SECONDS` defaults to `300` and controls how long an inactive conversation is kept before the next normal user message starts a fresh session.
 
 Without `OPENAI_API_KEY`, ScreenBuddy uses deterministic heuristic extraction and centralized fallback dialogue so tests and local development still work.
 
@@ -69,5 +70,6 @@ Without `OPENAI_API_KEY`, ScreenBuddy uses deterministic heuristic extraction an
 
 - Session memory is in process. This is simple and testable, but it will reset on deploy/restart and should move to durable storage for production.
 - `/start` and `/new` both clear the same in-memory session keyed by Telegram `chat_id`; there is no durable multi-session history yet.
+- Normal user messages after the configured inactivity timeout start a fresh in-memory session. Telegram commands keep their command-specific behavior.
 - The search integration still uses the existing TF-IDF catalog engine. The refactor adds LLM dialogue, intent building, ranking, and conversational control around it rather than introducing a heavier retrieval stack.
 - State extraction is structured-only; user-facing copy belongs to the dialogue generator.

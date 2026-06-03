@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Request
 
 from agent.conversation_state import ConversationSessionStore
@@ -13,10 +15,30 @@ app = FastAPI()
 
 TOP_N = 3
 MIN_SIMILARITY = 0.2
+DEFAULT_SESSION_TIMEOUT_SECONDS = 300
+
+
+def _session_timeout_seconds() -> int:
+    try:
+        value = int(
+            os.getenv(
+                "SCREENBUDDY_SESSION_TIMEOUT_SECONDS",
+                str(DEFAULT_SESSION_TIMEOUT_SECONDS),
+            )
+        )
+    except ValueError:
+        return DEFAULT_SESSION_TIMEOUT_SECONDS
+
+    if value <= 0:
+        return DEFAULT_SESSION_TIMEOUT_SECONDS
+
+    return value
 
 
 df, vectorizer, tfidf_matrix = load_catalog()
-conversation_store = ConversationSessionStore()
+conversation_store = ConversationSessionStore(
+    timeout_seconds=_session_timeout_seconds(),
+)
 screenbuddy_agent = ScreenBuddyAgent(
     store=conversation_store,
     search_fn=search_titles,
