@@ -15,7 +15,7 @@ Definitions:
 
 - accepted: the user is okay with the recommendation and the session should end. Examples: "ok", "sounds good", "yes", "thanks", "cool", "I'll watch it".
 - refine: the user asks to change, narrow, filter, or re-run recommendations. Examples: "more fun", "only tv shows", "something shorter", "Netflix only".
-- negative: the user rejects the recommendations without enough new direction. Examples: "no", "not it", "not quite".
+- negative: the user rejects the recommendations, recommendation quality, or vibe without enough new direction. Examples: "no", "not it", "not quite", "That is a bad recommendation", "Wrong vibe, not what I wanted", "These are bad recommendations".
 - ambiguous: the user's intent is unclear.
 
 Rules:

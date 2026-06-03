@@ -57,8 +57,12 @@ NEGATIVE_CUES = {
     "not",
     "not it",
     "not quite",
+    "bad recommendation",
+    "bad recommend",
     "don't like",
     "do not like",
+    "wrong recommendation",
+    "wrong vibe",
 }
 
 

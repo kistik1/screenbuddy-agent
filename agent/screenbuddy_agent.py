@@ -14,6 +14,7 @@ from agent.dialogue_generator import (
 )
 from agent.feedback_handler import (
     apply_feedback,
+    extract_filter_refinements,
     is_negative_feedback,
 )
 from agent.policy import next_follow_up_target, should_recommend
@@ -106,7 +107,10 @@ class ScreenBuddyAgent:
             changed = apply_feedback(session, clean_text)
             if changed:
                 return self._recommend(session)
-            if is_negative_feedback(clean_text):
+            if (
+                feedback_intent == "negative"
+                or is_negative_feedback(clean_text)
+            ):
                 session.awaiting_feedback = False
                 self.store.set(session)
                 return AgentResponse(
@@ -121,6 +125,9 @@ class ScreenBuddyAgent:
 
         extracted = extract_state(clean_text, session.conversation_text())
         session.user_state.merge(extracted)
+        filter_updates = extract_filter_refinements(clean_text)
+        if filter_updates:
+            session.search_filters.update(filter_updates)
 
         if should_recommend(session):
             return self._recommend(session)

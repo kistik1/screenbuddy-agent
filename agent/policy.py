@@ -17,6 +17,12 @@ FollowUpTarget = Literal[
 
 def should_recommend(session: ConversationSession) -> bool:
     state = session.user_state
+    if session.search_filters:
+        return True
+    if state.genres:
+        return True
+    if state.language_preference != "unknown":
+        return True
     if state.has_emotional_signal() and state.has_directional_signal():
         return True
     if state.confidence >= 0.75 and state.has_emotional_signal():

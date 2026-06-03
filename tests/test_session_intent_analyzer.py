@@ -48,6 +48,30 @@ def test_classify_feedback_intent_uses_llm_result(monkeypatch):
     assert result == "accepted"
 
 
+def test_classify_feedback_intent_uses_llm_for_bad_recommendation(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        analyzer,
+        "client",
+        FakeClient(
+            """
+            {
+              "intent": "negative",
+              "reason": "user rejects the recommendation quality"
+            }
+            """
+        ),
+    )
+
+    result = analyzer.classify_feedback_intent(
+        "That is a bad recommendation",
+        "assistant recommended options",
+    )
+
+    assert result == "negative"
+
+
 def test_classify_feedback_intent_invalid_llm_result_is_ambiguous(
     monkeypatch,
 ):
@@ -74,5 +98,13 @@ def test_classify_feedback_intent_falls_back_without_llm(monkeypatch):
     assert analyzer.classify_feedback_intent("ok") == "accepted"
     assert analyzer.classify_feedback_intent("yes thanks") == "accepted"
     assert analyzer.classify_feedback_intent("not ok") == "negative"
+    assert (
+        analyzer.classify_feedback_intent("That is a bad recommendation")
+        == "negative"
+    )
+    assert (
+        analyzer.classify_feedback_intent("Wrong vibe, not what I wanted")
+        == "negative"
+    )
     assert analyzer.classify_feedback_intent("only tv shows") == "refine"
     assert analyzer.classify_feedback_intent("more fun") == "refine"

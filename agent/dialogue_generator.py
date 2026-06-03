@@ -131,7 +131,7 @@ def _fallback_dialogue(context: DialogueContext) -> str:
     if context.phase == "help":
         return "Tell me what you feel like watching, or how your day has been. I will ask one question at a time and then recommend a few picks."
     if context.phase == "feedback_clarification":
-        return "Got it. What felt off about them?"
+        return "Got it. Sounds like the wrong vibe. Was it too heavy, too boring, or just not the kind of feel you wanted?"
     if context.phase == "off_topic":
         return "I am ScreenBuddy, so I can help you choose something to watch. Tell me what kind of mood or night you are in, and I will find a movie or show that fits."
     if context.phase == "no_results":

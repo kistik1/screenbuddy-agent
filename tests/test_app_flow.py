@@ -56,7 +56,7 @@ def _agent(search_calls, recommendations=None, store=None):
         if context.phase == "no_results":
             return "Generated no-results refinement?"
         if context.phase == "feedback_clarification":
-            return "What felt off about them?"
+            return "Got it. Sounds like the wrong vibe. Was it too heavy, too boring, or just not the kind of feel you wanted?"
         if context.phase == "off_topic":
             return "I am ScreenBuddy. Want help choosing a movie or show?"
         if context.phase == "greeting":
@@ -260,6 +260,120 @@ def test_agent_recommends_after_enough_context(monkeypatch):
     assert "funny" in search_calls[0]["query_text"]
 
 
+def test_agent_initial_discovery_applies_kids_filter(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "We need something light for kids after dinner",
+    )
+
+    assert response.searched is True
+    assert search_calls[0]["target_audience"] == "kids"
+
+
+def test_agent_initial_discovery_applies_family_movie_filters(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "Find a warm family movie for tonight",
+    )
+
+    assert response.searched is True
+    assert search_calls[0]["target_audience"] == "family"
+    assert search_calls[0]["type"] == "Movie"
+
+
+def test_agent_initial_discovery_applies_adults_filter(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I want something thoughtful for adults",
+    )
+
+    assert response.searched is True
+    assert search_calls[0]["target_audience"] == "adults"
+
+
+def test_agent_initial_discovery_applies_tv_show_filter(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I'm bored, only TV shows please",
+    )
+
+    assert response.searched is True
+    assert search_calls[0]["type"] == "TV Show"
+
+
+def test_agent_initial_discovery_applies_classic_movie_filters(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(123, "I want a classic cozy movie")
+
+    assert response.searched is True
+    assert search_calls[0]["age_category"] == "classic"
+    assert search_calls[0]["type"] == "Movie"
+
+
+def test_agent_initial_discovery_preserves_romance_genre(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I want a sweet romance that is easy to watch",
+    )
+
+    assert response.searched is True
+    assert response.intent is not None
+    assert "romance" in response.intent.genres
+
+
+def test_agent_initial_discovery_preserves_documentary_genre(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I want a thoughtful documentary tonight",
+    )
+
+    assert response.searched is True
+    assert response.intent is not None
+    assert "documentary" in response.intent.genres
+
+
+def test_agent_initial_discovery_applies_english_language(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I want something relaxing in English",
+    )
+
+    assert response.searched is True
+    assert response.intent is not None
+    assert response.intent.language_preference == "english"
+
+
 def test_agent_no_results_asks_generated_refinement(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
     search_calls = []
@@ -289,7 +403,46 @@ def test_agent_negative_feedback_asks_refinement_without_restart(monkeypatch):
     )
     response = agent.handle_message(123, "No, not it")
 
-    assert response.message == "What felt off about them?"
+    assert "wrong vibe" in response.message
+    assert response.searched is False
+    assert len(search_calls) == 1
+
+
+def test_agent_bad_recommendation_asks_refinement_without_search(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I want something relaxing and funny",
+    )
+    response = agent.handle_message(123, "That is a bad recommendation")
+
+    assert response.searched is False
+    assert "wrong vibe" in response.message
+    assert len(search_calls) == 1
+
+
+def test_agent_wrong_vibe_asks_refinement_without_search(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(
+        123,
+        "I am bored and want something exciting",
+    )
+    response = agent.handle_message(123, "Wrong vibe, not what I wanted")
+
+    assert response.searched is False
+    assert "wrong vibe" in response.message
+    assert "too heavy" in response.message
+    assert "too boring" in response.message
     assert len(search_calls) == 1
 
 
@@ -591,4 +744,3 @@ def test_session_timeout_env_parser_falls_back_for_invalid_values(
 
     monkeypatch.setenv("SCREENBUDDY_SESSION_TIMEOUT_SECONDS", "120")
     assert app_module._session_timeout_seconds() == 120
-

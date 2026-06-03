@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Iterable, List
 
 from agent.conversation_state import UserPreferenceState
@@ -47,6 +48,7 @@ def extract_state(message: str, conversation_text: str) -> UserPreferenceState:
         genres=genres,
         avoid_genres=_unique(avoid_genres),
         runtime_preference=legacy_state.get("preferred_length", "unknown"),
+        language_preference=_extract_language_preference(message),
         free_text_context=conversation_text,
         confidence=legacy_state.get("confidence", 0.0),
     )
@@ -92,6 +94,12 @@ def _extract_genres(message: str) -> List[str]:
     ]
 
 
+def _extract_language_preference(message: str) -> str:
+    if re.search(r"\bin\s+english\b|\benglish[- ]language\b", message.lower()):
+        return "english"
+    return "unknown"
+
+
 def _unique(values: Iterable[str]) -> List[str]:
     result: List[str] = []
     for value in values:
@@ -105,4 +113,3 @@ __all__ = [
     "extract_state",
     "is_greeting_only_message",
 ]
-
