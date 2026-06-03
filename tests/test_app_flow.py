@@ -98,13 +98,15 @@ def test_session_store_expires_session_after_timeout():
     )
 
     session = store.get_or_create(123)
-    session.add_message("old context")
+    session.add_user_turn("old context")
+    session.add_assistant_turn("old reply")
     store.set(session)
     clock.advance(301)
     fresh_session = store.get_or_create(123)
 
     assert fresh_session is not session
     assert fresh_session.messages == []
+    assert fresh_session.transcript == []
 
 
 def test_session_store_invalid_timeout_uses_default():
@@ -146,6 +148,10 @@ def test_agent_message_after_timeout_starts_fresh_session(monkeypatch):
     assert response.message == "Warm generated greeting?"
     assert session is not None
     assert session.messages == ["Hello"]
+    assert [turn.role for turn in session.transcript] == [
+        "user",
+        "assistant",
+    ]
 
 
 def test_agent_discovery_asks_one_warm_follow_up(monkeypatch):
@@ -180,6 +186,10 @@ def test_agent_off_topic_redirects_without_search_or_session_message(
     assert search_calls == []
     assert session is not None
     assert session.messages == []
+    assert [(turn.role, turn.kind) for turn in session.transcript] == [
+        ("user", "normal"),
+        ("assistant", "off_topic"),
+    ]
 
 
 def test_agent_resumes_normally_after_off_topic_message(monkeypatch):
@@ -258,6 +268,49 @@ def test_agent_recommends_after_enough_context(monkeypatch):
     assert search_calls
     assert "tired" in search_calls[0]["query_text"]
     assert "funny" in search_calls[0]["query_text"]
+
+
+def test_agent_tracks_full_transcript_for_dialogue_context(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    seen_transcripts = []
+
+    def fake_search(**kwargs):
+        search_calls.append(kwargs["parsed_query"])
+        return []
+
+    def capture_dialogue(context: DialogueContext):
+        seen_transcripts.append(context.session.transcript_text())
+        return f"Reply to {context.latest_user_message}"
+
+    agent = ScreenBuddyAgent(
+        store=ConversationSessionStore(),
+        search_fn=fake_search,
+        search_context={
+            "df": object(),
+            "vectorizer": object(),
+            "tfidf_matrix": object(),
+        },
+        dialogue_fn=capture_dialogue,
+    )
+
+    agent.handle_message(123, "Hello")
+    agent.handle_message(123, "I'm ok today")
+    response = agent.handle_message(123, "What?")
+    session = agent.store.get(123)
+
+    assert response.searched is False
+    assert session is not None
+    assert [turn.role for turn in session.transcript] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert "Assistant message 2" in seen_transcripts[-1]
+    assert "Reply to I'm ok today" in seen_transcripts[-1]
 
 
 def test_agent_initial_discovery_applies_kids_filter(monkeypatch):
@@ -641,7 +694,13 @@ def test_webhook_start_resets_session_and_sends_onboarding(monkeypatch):
 
     assert response.status_code == 200
     assert sent_messages == [(456, "Generated greeting")]
-    assert app_module.screenbuddy_agent.store.get(456) is None
+    session = app_module.screenbuddy_agent.store.get(456)
+    assert session is not None
+    assert session.messages == []
+    assert [(turn.role, turn.content, turn.kind) for turn in session.transcript] == [
+        ("user", "/start", "command"),
+        ("assistant", "Generated greeting", "command"),
+    ]
 
 
 def test_webhook_new_resets_session_and_sends_new_session_copy(
@@ -685,11 +744,18 @@ def test_webhook_new_resets_session_and_sends_new_session_copy(
 
     assert response.status_code == 200
     assert sent_messages == [(456, "Generated session_reset")]
-    assert app_module.screenbuddy_agent.store.get(456) is None
+    session = app_module.screenbuddy_agent.store.get(456)
+    assert session is not None
+    assert session.messages == []
+    assert [(turn.role, turn.content, turn.kind) for turn in session.transcript] == [
+        ("user", "/new", "command"),
+        ("assistant", "Generated session_reset", "command"),
+    ]
 
 
 def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
     app_module = importlib.import_module("app")
+    app_module.screenbuddy_agent.reset(456)
     session = app_module.screenbuddy_agent.store.get_or_create(456)
     session.add_message("keep me")
     session.updated_at = 0
@@ -729,6 +795,11 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
     assert sent_messages == [(456, "Generated help")]
     assert app_module.screenbuddy_agent.store.get(456) is session
     assert session.messages == ["keep me"]
+    assert [(turn.role, turn.content, turn.kind) for turn in session.transcript] == [
+        ("user", "keep me", "normal"),
+        ("user", "/help", "command"),
+        ("assistant", "Generated help", "command"),
+    ]
 
 
 def test_session_timeout_env_parser_falls_back_for_invalid_values(

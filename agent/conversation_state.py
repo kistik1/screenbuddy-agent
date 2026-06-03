@@ -7,6 +7,14 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 EnergyLevel = Literal["low", "medium", "high", "unknown"]
 IntensityTolerance = Literal["low", "medium", "high", "unknown"]
+ConversationRole = Literal["user", "assistant"]
+
+
+@dataclass
+class ConversationTurn:
+    role: ConversationRole
+    content: str
+    kind: str = "normal"
 
 
 @dataclass
@@ -130,6 +138,7 @@ class WatchSearchIntent:
 class ConversationSession:
     chat_id: int
     messages: List[str] = field(default_factory=list)
+    transcript: List[ConversationTurn] = field(default_factory=list)
     user_state: UserPreferenceState = field(
         default_factory=UserPreferenceState
     )
@@ -141,13 +150,44 @@ class ConversationSession:
     updated_at: float = field(default_factory=time.time)
 
     def add_message(self, message: str) -> None:
-        self.messages.append(message)
+        self.add_user_turn(message)
+
+    def add_user_turn(
+        self,
+        message: str,
+        kind: str = "normal",
+        include_in_messages: bool = True,
+    ) -> None:
+        self.transcript.append(
+            ConversationTurn(role="user", content=message, kind=kind)
+        )
+        if include_in_messages:
+            self.messages.append(message)
+        self.updated_at = time.time()
+
+    def add_assistant_turn(
+        self,
+        message: str,
+        kind: str = "normal",
+    ) -> None:
+        self.transcript.append(
+            ConversationTurn(role="assistant", content=message, kind=kind)
+        )
         self.updated_at = time.time()
 
     def conversation_text(self) -> str:
         return "\n".join(
             f"User message {index}: {message}"
             for index, message in enumerate(self.messages, start=1)
+        )
+
+    def transcript_text(self) -> str:
+        return "\n".join(
+            (
+                f"{turn.role.title()} message {index}"
+                f" ({turn.kind}): {turn.content}"
+            )
+            for index, turn in enumerate(self.transcript, start=1)
         )
 
 

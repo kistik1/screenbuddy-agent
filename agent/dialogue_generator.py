@@ -67,6 +67,19 @@ def _build_payload(context: DialogueContext) -> Dict[str, Any]:
         "phase": context.phase,
         "latest_user_message": context.latest_user_message,
         "conversation": session.conversation_text() if session else "",
+        "transcript": session.transcript_text() if session else "",
+        "transcript_turns": (
+            [
+                {
+                    "role": turn.role,
+                    "content": turn.content,
+                    "kind": turn.kind,
+                }
+                for turn in session.transcript
+            ]
+            if session
+            else []
+        ),
         "user_state": (
             session.user_state.to_dict()
             if session

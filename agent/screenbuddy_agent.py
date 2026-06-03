@@ -61,32 +61,34 @@ class ScreenBuddyAgent:
     def handle_message(self, chat_id: int, text: str) -> AgentResponse:
         clean_text = text.strip()
         session = self.store.get_or_create(chat_id)
+        session.add_user_turn(clean_text)
 
         topic_classification = classify_message_topic(
             clean_text,
             awaiting_feedback=session.awaiting_feedback,
         )
         if topic_classification == "off_topic":
-            return AgentResponse(
-                message=self.dialogue_fn(
+            session.messages.pop()
+            return self._respond(
+                session,
+                self.dialogue_fn(
                     DialogueContext(
                         phase="off_topic",
                         latest_user_message=clean_text,
                         session=session,
                     )
-                )
+                ),
+                kind="off_topic",
             )
-
-        session.add_message(clean_text)
 
         if (
             len(session.messages) == 1
             and is_greeting_only_message(clean_text)
         ):
             session.follow_up_count += 1
-            self.store.set(session)
-            return AgentResponse(
-                message=self.dialogue_fn(
+            return self._respond(
+                session,
+                self.dialogue_fn(
                     DialogueContext(
                         phase="greeting",
                         latest_user_message=clean_text,
@@ -101,6 +103,10 @@ class ScreenBuddyAgent:
                 session.conversation_text(),
             )
             if feedback_intent == "accepted":
+                session.add_assistant_turn(
+                    "Good watching time.",
+                    kind="feedback_accepted",
+                )
                 self.store.clear(chat_id)
                 return AgentResponse(message="Good watching time.")
 
@@ -112,9 +118,9 @@ class ScreenBuddyAgent:
                 or is_negative_feedback(clean_text)
             ):
                 session.awaiting_feedback = False
-                self.store.set(session)
-                return AgentResponse(
-                    message=self.dialogue_fn(
+                return self._respond(
+                    session,
+                    self.dialogue_fn(
                         DialogueContext(
                             phase="feedback_clarification",
                             latest_user_message=clean_text,
@@ -133,9 +139,9 @@ class ScreenBuddyAgent:
             return self._recommend(session)
 
         session.follow_up_count += 1
-        self.store.set(session)
-        return AgentResponse(
-            message=self.dialogue_fn(
+        return self._respond(
+            session,
+            self.dialogue_fn(
                 DialogueContext(
                     phase="discovery_follow_up",
                     latest_user_message=clean_text,
@@ -174,9 +180,26 @@ class ScreenBuddyAgent:
         session.last_intent = intent
         session.last_recommendations = ranked
         session.awaiting_feedback = bool(ranked)
+        session.add_assistant_turn(message, kind=phase)
         self.store.set(session)
         return AgentResponse(
             message=message,
             searched=True,
+            intent=intent,
+        )
+
+    def _respond(
+        self,
+        session,
+        message: str,
+        kind: str = "normal",
+        searched: bool = False,
+        intent: WatchSearchIntent | None = None,
+    ) -> AgentResponse:
+        session.add_assistant_turn(message, kind=kind)
+        self.store.set(session)
+        return AgentResponse(
+            message=message,
+            searched=searched,
             intent=intent,
         )

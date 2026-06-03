@@ -95,24 +95,71 @@ async def telegram_webhook(request: Request):
 
     if text == "/start":
         screenbuddy_agent.reset(chat_id)
+        session = conversation_store.get_or_create(chat_id)
+        session.add_user_turn(
+            text,
+            kind="command",
+            include_in_messages=False,
+        )
+        message = generate_dialogue(
+            DialogueContext(
+                phase="greeting",
+                latest_user_message=text,
+                session=session,
+            )
+        )
+        session.add_assistant_turn(message, kind="command")
+        conversation_store.set(session)
         send_telegram_message(
             chat_id,
-            generate_dialogue(DialogueContext(phase="greeting")),
+            message,
         )
         return {"ok": True}
 
     if text == "/new":
         screenbuddy_agent.reset(chat_id)
+        session = conversation_store.get_or_create(chat_id)
+        session.add_user_turn(
+            text,
+            kind="command",
+            include_in_messages=False,
+        )
+        message = generate_dialogue(
+            DialogueContext(
+                phase="session_reset",
+                latest_user_message=text,
+                session=session,
+            )
+        )
+        session.add_assistant_turn(message, kind="command")
+        conversation_store.set(session)
         send_telegram_message(
             chat_id,
-            generate_dialogue(DialogueContext(phase="session_reset")),
+            message,
         )
         return {"ok": True}
 
     if text == "/help":
+        session = conversation_store.get(chat_id)
+        if session is None:
+            session = conversation_store.get_or_create(chat_id)
+        session.add_user_turn(
+            text,
+            kind="command",
+            include_in_messages=False,
+        )
+        message = generate_dialogue(
+            DialogueContext(
+                phase="help",
+                latest_user_message=text,
+                session=session,
+            )
+        )
+        session.add_assistant_turn(message, kind="command")
+        conversation_store.set(session)
         send_telegram_message(
             chat_id,
-            generate_dialogue(DialogueContext(phase="help")),
+            message,
         )
         return {"ok": True}
 
