@@ -116,6 +116,44 @@ def test_analyze_user_state_uses_heuristic_fallback(
     assert result["user_state"]["energy_level"] == "medium"
 
 
+def test_analyze_user_state_infers_drained_without_direct_tired_word(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+
+    result = analyzer.analyze_user_state("I'm drained and my brain is off")
+
+    assert result["user_state"]["mood"] == "tired"
+    assert result["user_state"]["viewing_intent"] == "relax"
+    assert result["user_state"]["energy_level"] == "low"
+
+
+def test_analyze_user_state_infers_overwhelmed_escape(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+
+    result = analyzer.analyze_user_state(
+        "I'm overwhelmed and need to switch off"
+    )
+
+    assert result["user_state"]["mood"] == "stressed"
+    assert result["user_state"]["viewing_intent"] == "escape"
+    assert result["user_state"]["energy_level"] == "low"
+
+
+def test_analyze_user_state_uncertain_user_still_needs_guidance(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+
+    result = analyzer.analyze_user_state("I don't know what I want")
+
+    assert result["needs_follow_up"] is True
+    assert result["user_state"]["mood"] == "neutral"
+    assert result["user_state"]["viewing_intent"] == "unknown"
+
+
 def test_analyze_user_state_marks_tired_user_as_needing_follow_up(
     monkeypatch,
 ):
@@ -169,26 +207,3 @@ def test_analyze_user_state_does_not_require_avoid_question(
 
     assert result["needs_follow_up"] is False
     assert "follow_up_questions" not in result
-
-
-def test_build_search_query_from_user_state():
-    search_query = (
-        analyzer.build_search_query_from_user_state(
-            user_state={
-                "mood": "sad",
-                "energy_level": "low",
-                "viewing_intent": "feel_comforted",
-                "content_complexity": "low",
-                "preferred_length": "short",
-                "avoid": ["violent"],
-                "confidence": 0.8,
-                "missing_info": [],
-            },
-            original_text="I feel sad, maybe something comforting",
-        )
-    )
-
-    assert search_query["duration_preference"] == "short"
-    assert "sad" in search_query["query_text"]
-    assert "feel comforted" in search_query["query_text"]
-    assert "not violent" in search_query["query_text"]

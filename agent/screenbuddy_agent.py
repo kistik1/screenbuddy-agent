@@ -13,16 +13,17 @@ from agent.dialogue_generator import (
     generate_dialogue,
 )
 from agent.feedback_handler import (
-    apply_feedback,
+    apply_structured_feedback,
     extract_filter_refinements,
-    is_negative_feedback,
 )
 from agent.policy import next_follow_up_target, should_recommend
 from agent.recommendation_ranker import rank_recommendations
 from agent.search_intent_builder import build_watch_search_intent
 from agent.state_extractor import extract_state, is_greeting_only_message
 from agent.topic_router import classify_message_topic
-from services.session_intent_analyzer import classify_feedback_intent
+from services.session_intent_analyzer import (
+    analyze_post_recommendation_follow_up,
+)
 
 
 SearchFn = Callable[..., List[Dict[str, Any]]]
@@ -98,11 +99,22 @@ class ScreenBuddyAgent:
             )
 
         if session.awaiting_feedback:
-            feedback_intent = classify_feedback_intent(
+            follow_up_analysis = analyze_post_recommendation_follow_up(
                 clean_text,
                 session.conversation_text(),
+                {
+                    "search_filters": session.search_filters,
+                    "last_intent": (
+                        session.last_intent.to_search_query()
+                        if session.last_intent
+                        else None
+                    ),
+                    "last_recommendations": session.last_recommendations,
+                },
             )
-            if feedback_intent == "accepted":
+            follow_up_intent = follow_up_analysis["intent"]
+
+            if follow_up_intent == "accept":
                 session.add_assistant_turn(
                     "Good watching time.",
                     kind="feedback_accepted",
@@ -110,14 +122,39 @@ class ScreenBuddyAgent:
                 self.store.clear(chat_id)
                 return AgentResponse(message="Good watching time.")
 
-            changed = apply_feedback(session, clean_text)
-            if changed:
-                return self._recommend(session)
-            if (
-                feedback_intent == "negative"
-                or is_negative_feedback(clean_text)
-            ):
-                session.awaiting_feedback = False
+            if follow_up_intent == "refine":
+                changed = apply_structured_feedback(
+                    session,
+                    follow_up_analysis,
+                )
+                if changed:
+                    return self._recommend(session)
+                return self._respond(
+                    session,
+                    self.dialogue_fn(
+                        DialogueContext(
+                            phase="feedback_clarification",
+                            latest_user_message=clean_text,
+                            session=session,
+                        )
+                    )
+                )
+
+            if follow_up_intent == "ask_question":
+                return self._respond(
+                    session,
+                    self.dialogue_fn(
+                        DialogueContext(
+                            phase="feedback_question",
+                            latest_user_message=clean_text,
+                            session=session,
+                            follow_up_analysis=follow_up_analysis,
+                        )
+                    ),
+                    kind="feedback_question",
+                )
+
+            if follow_up_intent in {"reject", "ambiguous"}:
                 return self._respond(
                     session,
                     self.dialogue_fn(

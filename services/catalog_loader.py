@@ -47,12 +47,6 @@ CUSTOM_STOP_WORDS = list(
 )
 
 
-def safe_text(value) -> str:
-    if pd.isna(value) or str(value).strip() == "":
-        return ""
-    return str(value).strip()
-
-
 def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in REQUIRED_COLUMNS:
         if col not in df.columns:

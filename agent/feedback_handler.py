@@ -2,58 +2,74 @@ from __future__ import annotations
 
 import re
 
+from typing import Any
+
 from agent.conversation_state import ConversationSession
 
 
-NEGATIVE_FEEDBACK = (
-    "no",
-    "not it",
-    "not quite",
-    "try again",
-    "wrong vibe",
-    "don't like",
-    "do not like",
-)
-
-
-def is_negative_feedback(message: str) -> bool:
-    lowered = message.lower().strip()
-    return any(phrase in lowered for phrase in NEGATIVE_FEEDBACK)
-
-
-def apply_feedback(
+def apply_structured_feedback(
     session: ConversationSession,
-    message: str,
+    analysis: dict[str, Any],
 ) -> bool:
-    lowered = message.lower()
     changed = False
 
-    filter_updates = extract_filter_refinements(message)
-    if filter_updates:
-        session.search_filters.update(filter_updates)
-        changed = True
+    refinements = analysis.get("refinements")
+    if isinstance(refinements, dict):
+        filter_updates = {
+            key: value
+            for key, value in refinements.items()
+            if key
+            in {
+                "streaming",
+                "type",
+                "duration_preference",
+                "target_audience",
+                "age_category",
+                "release_year_min",
+                "release_year_max",
+            }
+            and value not in (None, "", [], {})
+        }
+        if filter_updates:
+            session.search_filters.update(filter_updates)
+            changed = True
 
-    if "more fun" in lowered or "funnier" in lowered or "playful" in lowered:
-        session.user_state.desired_feeling = "funny and uplifting"
-        session.user_state.intensity_tolerance = "low"
-        changed = True
-    if "lighter" in lowered or "too heavy" in lowered:
-        session.user_state.intensity_tolerance = "low"
-        session.user_state.avoid_genres = _append_once(
-            session.user_state.avoid_genres,
-            "heavy",
-        )
-        changed = True
-    if "too boring" in lowered or "more exciting" in lowered:
-        session.user_state.desired_feeling = "exciting fun"
-        session.user_state.energy_level = "medium"
-        changed = True
-    if "cozier" in lowered or "more cozy" in lowered:
-        session.user_state.desired_feeling = "comfort"
-        session.user_state.intensity_tolerance = "low"
-        changed = True
+    vibe_adjustment = analysis.get("vibe_adjustment")
+    if isinstance(vibe_adjustment, dict):
+        if _set_known_string(
+            session,
+            "desired_feeling",
+            vibe_adjustment.get("desired_feeling"),
+        ):
+            changed = True
+        if _set_allowed_string(
+            session,
+            "intensity_tolerance",
+            vibe_adjustment.get("intensity_tolerance"),
+            {"low", "medium", "high"},
+        ):
+            changed = True
+        if _set_allowed_string(
+            session,
+            "energy_level",
+            vibe_adjustment.get("energy_level"),
+            {"low", "medium", "high"},
+        ):
+            changed = True
 
-    session.user_state.free_text_context = session.conversation_text()
+        avoid_genres = vibe_adjustment.get("avoid_genres")
+        if isinstance(avoid_genres, list):
+            for item in avoid_genres:
+                normalized = str(item).strip().lower()
+                if (
+                    normalized
+                    and normalized not in session.user_state.avoid_genres
+                ):
+                    session.user_state.avoid_genres.append(normalized)
+                    changed = True
+
+    if changed:
+        session.user_state.free_text_context = session.conversation_text()
     return changed
 
 
@@ -92,10 +108,33 @@ def extract_filter_refinements(message: str) -> dict[str, object]:
     return updates
 
 
-def _append_once(values: list[str], value: str) -> list[str]:
-    if value not in values:
-        return values + [value]
-    return values
+def _set_known_string(
+    session: ConversationSession,
+    field_name: str,
+    value: Any,
+) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    if getattr(session.user_state, field_name) == normalized:
+        return False
+    setattr(session.user_state, field_name, normalized)
+    return True
+
+
+def _set_allowed_string(
+    session: ConversationSession,
+    field_name: str,
+    value: Any,
+    allowed_values: set[str],
+) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized not in allowed_values:
+        return False
+    if getattr(session.user_state, field_name) == normalized:
+        return False
+    setattr(session.user_state, field_name, normalized)
+    return True
 
 
 def _extract_content_type(lowered: str) -> str | None:

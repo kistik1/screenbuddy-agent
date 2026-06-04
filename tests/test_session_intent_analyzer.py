@@ -6,8 +6,10 @@ from services import session_intent_analyzer as analyzer
 class FakeCompletions:
     def __init__(self, content: str):
         self.content = content
+        self.kwargs = None
 
     def create(self, **kwargs):
+        self.kwargs = kwargs
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -21,90 +23,113 @@ class FakeCompletions:
 
 class FakeClient:
     def __init__(self, content: str):
-        self.chat = SimpleNamespace(
-            completions=FakeCompletions(content),
-        )
+        self.completions = FakeCompletions(content)
+        self.chat = SimpleNamespace(completions=self.completions)
 
 
-def test_classify_feedback_intent_uses_llm_result(monkeypatch):
+def test_analyze_follow_up_uses_structured_llm_result(monkeypatch):
+    fake_client = FakeClient(
+        """
+        {
+          "intent": "refine",
+          "user_question": "",
+          "question_type": "none",
+          "refinements": {
+            "streaming": "netflix",
+            "duration_preference": "short",
+            "ignored": "value"
+          },
+          "vibe_adjustment": {
+            "desired_feeling": "funny and uplifting",
+            "avoid_genres": ["heavy"]
+          },
+          "needs_clarification": false,
+          "reason": "user asked to narrow the search"
+        }
+        """
+    )
+    monkeypatch.setattr(analyzer, "client", fake_client)
+
+    result = analyzer.analyze_post_recommendation_follow_up(
+        "Can you make it shorter and Netflix only?",
+        "assistant recommended options",
+        {"search_filters": {}},
+    )
+
+    assert result["intent"] == "refine"
+    assert result["refinements"] == {
+        "streaming": "netflix",
+        "duration_preference": "short",
+    }
+    assert result["vibe_adjustment"] == {
+        "desired_feeling": "funny and uplifting",
+        "avoid_genres": ["heavy"],
+    }
+    assert result["needs_clarification"] is False
+    assert fake_client.completions.kwargs["response_format"] == {
+        "type": "json_object"
+    }
+
+
+def test_analyze_follow_up_preserves_question_intent(monkeypatch):
     monkeypatch.setattr(
         analyzer,
         "client",
         FakeClient(
             """
             {
-              "intent": "accepted",
-              "reason": "user approves the recommendation"
+              "intent": "ask_question",
+              "user_question": "It is ok if I have only Netflix?",
+              "question_type": "constraint_acceptability",
+              "refinements": {"streaming": "netflix"},
+              "vibe_adjustment": {},
+              "needs_clarification": false,
+              "reason": "user asks whether the constraint is acceptable"
             }
             """
         ),
     )
 
-    result = analyzer.classify_feedback_intent(
-        "ok",
+    result = analyzer.analyze_post_recommendation_follow_up(
+        "It is ok if I have only Netflix?",
         "assistant recommended options",
     )
 
-    assert result == "accepted"
+    assert result["intent"] == "ask_question"
+    assert result["question_type"] == "constraint_acceptability"
+    assert result["user_question"] == "It is ok if I have only Netflix?"
 
 
-def test_classify_feedback_intent_uses_llm_for_bad_recommendation(
-    monkeypatch,
-):
+def test_analyze_follow_up_invalid_llm_result_is_ambiguous(monkeypatch):
     monkeypatch.setattr(
         analyzer,
         "client",
         FakeClient(
             """
             {
-              "intent": "negative",
-              "reason": "user rejects the recommendation quality"
+              "intent": "done",
+              "question_type": "unsupported"
             }
             """
         ),
     )
 
-    result = analyzer.classify_feedback_intent(
-        "That is a bad recommendation",
-        "assistant recommended options",
-    )
+    result = analyzer.analyze_post_recommendation_follow_up("ok")
 
-    assert result == "negative"
-
-
-def test_classify_feedback_intent_invalid_llm_result_is_ambiguous(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        analyzer,
-        "client",
-        FakeClient(
-            """
-            {
-              "intent": "done"
-            }
-            """
-        ),
-    )
-
-    result = analyzer.classify_feedback_intent("ok")
-
-    assert result == "ambiguous"
+    assert result["intent"] == "ambiguous"
+    assert result["question_type"] == "none"
+    assert result["needs_clarification"] is True
 
 
-def test_classify_feedback_intent_falls_back_without_llm(monkeypatch):
+def test_analyze_follow_up_without_llm_returns_ambiguity(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
 
-    assert analyzer.classify_feedback_intent("ok") == "accepted"
-    assert analyzer.classify_feedback_intent("yes thanks") == "accepted"
-    assert analyzer.classify_feedback_intent("not ok") == "negative"
-    assert (
-        analyzer.classify_feedback_intent("That is a bad recommendation")
-        == "negative"
-    )
-    assert (
-        analyzer.classify_feedback_intent("Wrong vibe, not what I wanted")
-        == "negative"
-    )
-    assert analyzer.classify_feedback_intent("only tv shows") == "refine"
-    assert analyzer.classify_feedback_intent("more fun") == "refine"
+    assert analyzer.analyze_post_recommendation_follow_up("ok") == {
+        "intent": "ambiguous",
+        "user_question": "",
+        "question_type": "none",
+        "refinements": {},
+        "vibe_adjustment": {},
+        "needs_clarification": True,
+        "reason": "",
+    }

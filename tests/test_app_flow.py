@@ -2,10 +2,11 @@
 
 from fastapi.testclient import TestClient
 
+from agent import screenbuddy_agent as screenbuddy_module
 from agent.conversation_state import ConversationSessionStore
 from agent.dialogue_generator import DialogueContext
 from agent.screenbuddy_agent import ScreenBuddyAgent
-from services import session_intent_analyzer
+from services import session_intent_analyzer as feedback_analyzer
 from services import user_state_analyzer as analyzer
 
 
@@ -57,11 +58,15 @@ def _agent(search_calls, recommendations=None, store=None):
             return "Generated no-results refinement?"
         if context.phase == "feedback_clarification":
             return "Got it. Sounds like the wrong vibe. Was it too heavy, too boring, or just not the kind of feel you wanted?"
+        if context.phase == "feedback_question":
+            return "Yes, Netflix is enough. I can keep the search to Netflix only if you want."
         if context.phase == "off_topic":
             return "I am ScreenBuddy. Want help choosing a movie or show?"
         if context.phase == "greeting":
             return "Warm generated greeting?"
         if context.phase == "discovery_follow_up":
+            if context.follow_up_target == "viewing_intent":
+                return "Pick a direction: switch off, feel cozy, laugh, or get pulled into something exciting?"
             return f"Generated follow-up for {context.follow_up_target}?"
         return f"Generated {context.phase}?"
 
@@ -74,6 +79,33 @@ def _agent(search_calls, recommendations=None, store=None):
             "tfidf_matrix": object(),
         },
         dialogue_fn=fake_dialogue,
+    )
+
+
+def _follow_up(
+    intent,
+    refinements=None,
+    vibe_adjustment=None,
+    question_type="none",
+    user_question="",
+    needs_clarification=False,
+):
+    return {
+        "intent": intent,
+        "user_question": user_question,
+        "question_type": question_type,
+        "refinements": refinements or {},
+        "vibe_adjustment": vibe_adjustment or {},
+        "needs_clarification": needs_clarification,
+        "reason": "",
+    }
+
+
+def _mock_follow_up(monkeypatch, result):
+    monkeypatch.setattr(
+        screenbuddy_module,
+        "analyze_post_recommendation_follow_up",
+        lambda *args, **kwargs: result,
     )
 
 
@@ -164,7 +196,8 @@ def test_agent_discovery_asks_one_warm_follow_up(monkeypatch):
         "Help me find something to watch",
     )
 
-    assert response.message == "Generated follow-up for viewing_intent?"
+    assert "switch off" in response.message
+    assert "feel cozy" in response.message
     assert response.searched is False
     assert search_calls == []
 
@@ -235,7 +268,8 @@ def test_agent_unclear_topic_uses_normal_discovery_flow(monkeypatch):
 
     response = agent.handle_message(123, "I do not know")
 
-    assert response.message == "Generated follow-up for viewing_intent?"
+    assert "switch off" in response.message
+    assert "feel cozy" in response.message
     assert response.searched is False
     assert search_calls == []
 
@@ -248,8 +282,39 @@ def test_agent_watch_related_japan_message_stays_in_scope(monkeypatch):
     response = agent.handle_message(123, "What should I watch in Japan?")
 
     assert response.searched is False
-    assert response.message == "Generated follow-up for viewing_intent?"
+    assert "switch off" in response.message
     assert search_calls == []
+
+
+def test_agent_uncertain_first_turn_gets_guided_options(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I feel blank and don't know what I want",
+    )
+
+    assert response.searched is False
+    assert "switch off" in response.message
+    assert "feel cozy" in response.message
+    assert search_calls == []
+
+
+def test_agent_recommends_after_uncertain_user_picks_option(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I feel blank and don't know what I want")
+    response = agent.handle_message(123, "Something easygoing and short")
+
+    assert response.searched is True
+    assert "Do these feel right" in response.message
+    assert search_calls
+    assert search_calls[0]["duration_preference"] == "short"
+    assert "easygoing" in search_calls[0]["query_text"]
 
 
 def test_agent_recommends_after_enough_context(monkeypatch):
@@ -446,7 +511,10 @@ def test_agent_no_results_asks_generated_refinement(monkeypatch):
 
 def test_agent_negative_feedback_asks_refinement_without_restart(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("reject", needs_clarification=True),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -465,7 +533,10 @@ def test_agent_bad_recommendation_asks_refinement_without_search(
     monkeypatch,
 ):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("reject", needs_clarification=True),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -482,7 +553,10 @@ def test_agent_bad_recommendation_asks_refinement_without_search(
 
 def test_agent_wrong_vibe_asks_refinement_without_search(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("reject", needs_clarification=True),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -501,7 +575,7 @@ def test_agent_wrong_vibe_asks_refinement_without_search(monkeypatch):
 
 def test_agent_accepts_feedback_and_ends_session(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(monkeypatch, _follow_up("accept"))
     search_calls = []
     agent = _agent(search_calls)
 
@@ -519,7 +593,7 @@ def test_agent_accepts_feedback_and_ends_session(monkeypatch):
 
 def test_agent_starts_fresh_after_feedback_acceptance(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(monkeypatch, _follow_up("accept"))
     search_calls = []
     agent = _agent(search_calls)
 
@@ -538,7 +612,16 @@ def test_agent_starts_fresh_after_feedback_acceptance(monkeypatch):
 
 def test_agent_feedback_with_direction_researches(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
-    monkeypatch.setattr(session_intent_analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up(
+            "refine",
+            vibe_adjustment={
+                "desired_feeling": "funny and uplifting",
+                "intensity_tolerance": "low",
+            },
+        ),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -556,6 +639,10 @@ def test_agent_feedback_with_direction_researches(monkeypatch):
 
 def test_agent_feedback_can_refine_to_tv_shows(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("refine", refinements={"type": "TV Show"}),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -572,6 +659,10 @@ def test_agent_feedback_can_refine_to_tv_shows(monkeypatch):
 
 def test_agent_feedback_can_refine_to_movies(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("refine", refinements={"type": "Movie"}),
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -588,6 +679,37 @@ def test_agent_feedback_can_refine_to_movies(monkeypatch):
 
 def test_agent_feedback_can_refine_existing_search_filters(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
+    follow_ups = {
+        "for adults": _follow_up(
+            "refine",
+            refinements={"target_audience": "adults"},
+        ),
+        "something shorter": _follow_up(
+            "refine",
+            refinements={"duration_preference": "short"},
+        ),
+        "netflix only": _follow_up(
+            "refine",
+            refinements={"streaming": "netflix"},
+        ),
+        "after 2018": _follow_up(
+            "refine",
+            refinements={"release_year_min": 2018},
+        ),
+        "before 2000": _follow_up(
+            "refine",
+            refinements={"release_year_max": 2000},
+        ),
+        "make it classic": _follow_up(
+            "refine",
+            refinements={"age_category": "classic"},
+        ),
+    }
+    monkeypatch.setattr(
+        screenbuddy_module,
+        "analyze_post_recommendation_follow_up",
+        lambda message, *args, **kwargs: follow_ups[message],
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -612,6 +734,21 @@ def test_agent_feedback_can_refine_existing_search_filters(monkeypatch):
 
 def test_agent_feedback_keeps_previous_filters(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
+    follow_ups = {
+        "only tv shows": _follow_up(
+            "refine",
+            refinements={"type": "TV Show"},
+        ),
+        "make it shorter": _follow_up(
+            "refine",
+            refinements={"duration_preference": "short"},
+        ),
+    }
+    monkeypatch.setattr(
+        screenbuddy_module,
+        "analyze_post_recommendation_follow_up",
+        lambda message, *args, **kwargs: follow_ups[message],
+    )
     search_calls = []
     agent = _agent(search_calls)
 
@@ -624,6 +761,184 @@ def test_agent_feedback_keeps_previous_filters(monkeypatch):
 
     assert search_calls[-1]["type"] == "TV Show"
     assert search_calls[-1]["duration_preference"] == "short"
+
+
+def test_agent_feedback_question_about_netflix_does_not_search(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up(
+            "ask_question",
+            question_type="constraint_acceptability",
+            user_question="It is ok if I have only Netflix?",
+        ),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "It is ok if I have only Netflix?")
+    session = agent.store.get(123)
+
+    assert response.searched is False
+    assert "Netflix is enough" in response.message
+    assert len(search_calls) == 1
+    assert session is not None
+    assert session.awaiting_feedback is True
+
+
+def test_agent_feedback_i_only_have_netflix_refines(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("refine", refinements={"streaming": "netflix"}),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "I only have Netflix")
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[-1]["streaming"] == "netflix"
+
+
+def test_agent_feedback_netflix_only_refines(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("refine", refinements={"streaming": "netflix"}),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "Netflix only")
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[-1]["streaming"] == "netflix"
+
+
+def test_agent_feedback_ok_but_netflix_only_refines_not_accepts(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("refine", refinements={"streaming": "netflix"}),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "ok but only Netflix")
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[-1]["streaming"] == "netflix"
+    assert agent.store.get(123) is not None
+
+
+def test_agent_feedback_these_are_not_right_rejects(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("reject", needs_clarification=True),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "these are not right")
+
+    assert response.searched is False
+    assert "wrong vibe" in response.message
+    assert len(search_calls) == 1
+
+
+def test_agent_feedback_shorter_and_netflix_refines_multiple_fields(
+    monkeypatch,
+):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up(
+            "refine",
+            refinements={
+                "duration_preference": "short",
+                "streaming": "netflix",
+            },
+        ),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(
+        123,
+        "Can you make it shorter and Netflix only?",
+    )
+
+    assert response.searched is True
+    assert len(search_calls) == 2
+    assert search_calls[-1]["duration_preference"] == "short"
+    assert search_calls[-1]["streaming"] == "netflix"
+
+
+def test_agent_feedback_netflix_enough_question_does_not_search(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up(
+            "ask_question",
+            question_type="constraint_acceptability",
+            user_question="Is Netflix enough or do you need another platform?",
+        ),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(
+        123,
+        "Is Netflix enough or do you need another platform?",
+    )
+
+    assert response.searched is False
+    assert "Netflix is enough" in response.message
+    assert len(search_calls) == 1
+
+
+def test_agent_ambiguous_feedback_asks_targeted_clarification(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    _mock_follow_up(
+        monkeypatch,
+        _follow_up("ambiguous", needs_clarification=True),
+    )
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "hmm")
+
+    assert response.searched is False
+    assert "wrong vibe" in response.message
+    assert len(search_calls) == 1
+
+
+def test_agent_no_llm_feedback_fallback_is_ambiguous(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    monkeypatch.setattr(feedback_analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    agent.handle_message(123, "I had a long day and want something light")
+    response = agent.handle_message(123, "ok")
+
+    assert response.searched is False
+    assert "wrong vibe" in response.message
+    assert len(search_calls) == 1
+    assert agent.store.get(123) is not None
 
 
 def test_webhook_uses_agent_response(monkeypatch):

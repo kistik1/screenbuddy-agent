@@ -3,6 +3,5 @@ uvicorn
 pandas
 scikit-learn
 requests
-python-multipart
 openai
 pytest

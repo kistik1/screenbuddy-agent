@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Literal
 
 from services.llm_service import (
@@ -10,72 +11,61 @@ from services.llm_service import (
 )
 
 
-FeedbackIntent = Literal["accepted", "refine", "negative", "ambiguous"]
+FollowUpIntent = Literal[
+    "accept",
+    "reject",
+    "refine",
+    "ask_question",
+    "ambiguous",
+]
 
-DEFAULT_FEEDBACK_INTENT_RESULT: Dict[str, Any] = {
+QUESTION_TYPES = {
+    "constraint_acceptability",
+    "search_capability",
+    "other",
+    "none",
+}
+REFINEMENT_FIELDS = {
+    "streaming",
+    "type",
+    "duration_preference",
+    "target_audience",
+    "age_category",
+    "release_year_min",
+    "release_year_max",
+}
+VIBE_FIELDS = {
+    "desired_feeling",
+    "intensity_tolerance",
+    "energy_level",
+    "avoid_genres",
+}
+
+DEFAULT_FOLLOW_UP_RESULT: Dict[str, Any] = {
     "intent": "ambiguous",
+    "user_question": "",
+    "question_type": "none",
+    "refinements": {},
+    "vibe_adjustment": {},
+    "needs_clarification": True,
     "reason": "",
 }
 
-ACCEPTANCE_PHRASES = {
-    "ok",
-    "okay",
-    "yes",
-    "yeah",
-    "yep",
-    "sounds good",
-    "great",
-    "thanks",
-    "thank you",
-    "cool",
-    "fine",
-    "works",
-    "good",
-    "i'll watch",
-    "ill watch",
-}
 
-REFINEMENT_CUES = {
-    "more",
-    "less",
-    "only",
-    "too",
-    "different",
-    "shorter",
-    "longer",
-    "netflix",
-    "movie",
-    "movies",
-    "show",
-    "shows",
-    "tv",
-    "again",
-}
-
-NEGATIVE_CUES = {
-    "no",
-    "not",
-    "not it",
-    "not quite",
-    "bad recommendation",
-    "bad recommend",
-    "don't like",
-    "do not like",
-    "wrong recommendation",
-    "wrong vibe",
-}
-
-
-def classify_feedback_intent(
+def analyze_post_recommendation_follow_up(
     message: str,
     conversation_text: str = "",
-) -> FeedbackIntent:
+    context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     clean_message = message.strip()
-    if not clean_message:
-        return "ambiguous"
+    if not clean_message or not client:
+        return DEFAULT_FOLLOW_UP_RESULT.copy()
 
-    if not client:
-        return _heuristic_feedback_intent(clean_message)
+    payload = {
+        "conversation": conversation_text,
+        "latest_user_message": clean_message,
+        "context": context or {},
+    }
 
     try:
         response = client.chat.completions.create(
@@ -85,48 +75,84 @@ def classify_feedback_intent(
             messages=[
                 {
                     "role": "system",
-                    "content": load_prompt("classify_feedback_intent.txt"),
+                    "content": load_prompt(
+                        "analyze_feedback_follow_up.txt"
+                    ),
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"conversation={conversation_text}\n"
-                        f"latest_user_message={clean_message}"
-                    ),
+                    "content": json.dumps(payload, ensure_ascii=False),
                 },
             ],
         )
-        content = response.choices[0].message.content.strip()
-        parsed = safe_json_loads(content, DEFAULT_FEEDBACK_INTENT_RESULT)
-        return _normalize_feedback_intent(parsed.get("intent"))
+        content = (response.choices[0].message.content or "").strip()
+        parsed = safe_json_loads(content, DEFAULT_FOLLOW_UP_RESULT)
+        return _normalize_follow_up_result(parsed)
     except Exception as error:
-        print(f"OpenAI feedback intent error: {error}")
-        return _heuristic_feedback_intent(clean_message)
+        print(f"OpenAI feedback follow-up analysis error: {error}")
+        return DEFAULT_FOLLOW_UP_RESULT.copy()
 
 
-def _normalize_feedback_intent(value: Any) -> FeedbackIntent:
+def _normalize_follow_up_result(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    result = DEFAULT_FOLLOW_UP_RESULT.copy()
+
+    intent = _normalize_intent(parsed.get("intent"))
+    result["intent"] = intent
+    result["user_question"] = str(parsed.get("user_question") or "").strip()
+    result["question_type"] = _normalize_question_type(
+        parsed.get("question_type")
+    )
+    result["refinements"] = _normalize_mapping(
+        parsed.get("refinements"),
+        REFINEMENT_FIELDS,
+    )
+    result["vibe_adjustment"] = _normalize_mapping(
+        parsed.get("vibe_adjustment"),
+        VIBE_FIELDS,
+    )
+    result["needs_clarification"] = bool(
+        parsed.get("needs_clarification", intent == "ambiguous")
+    )
+    result["reason"] = str(parsed.get("reason") or "").strip()
+    return result
+
+
+def _normalize_intent(value: Any) -> FollowUpIntent:
     normalized = str(value or "ambiguous").strip().lower()
-    if normalized in {"accepted", "refine", "negative", "ambiguous"}:
+    if normalized in {
+        "accept",
+        "reject",
+        "refine",
+        "ask_question",
+        "ambiguous",
+    }:
         return normalized  # type: ignore[return-value]
     return "ambiguous"
 
 
-def _heuristic_feedback_intent(message: str) -> FeedbackIntent:
-    lowered = message.lower().strip()
-
-    if any(cue in lowered for cue in REFINEMENT_CUES):
-        return "refine"
-
-    if any(cue in lowered for cue in NEGATIVE_CUES):
-        return "negative"
-
-    if lowered in ACCEPTANCE_PHRASES:
-        return "accepted"
-
-    if any(phrase in lowered for phrase in ACCEPTANCE_PHRASES):
-        return "accepted"
-
-    return "ambiguous"
+def _normalize_question_type(value: Any) -> str:
+    normalized = str(value or "none").strip().lower()
+    if normalized in QUESTION_TYPES:
+        return normalized
+    return "none"
 
 
-__all__ = ["FeedbackIntent", "classify_feedback_intent"]
+def _normalize_mapping(
+    value: Any,
+    allowed_fields: set[str],
+) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: Dict[str, Any] = {}
+    for key, raw_item in value.items():
+        if key not in allowed_fields or raw_item in (None, "", [], {}):
+            continue
+        normalized[key] = raw_item
+    return normalized
+
+
+__all__ = [
+    "FollowUpIntent",
+    "analyze_post_recommendation_follow_up",
+]

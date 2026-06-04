@@ -15,6 +15,7 @@ DialoguePhase = Literal[
     "recommendations",
     "no_results",
     "feedback_clarification",
+    "feedback_question",
     "off_topic",
     "session_reset",
     "help",
@@ -29,6 +30,7 @@ class DialogueContext:
     follow_up_target: str | None = None
     intent: WatchSearchIntent | None = None
     recommendations: List[Dict[str, Any]] = field(default_factory=list)
+    follow_up_analysis: Dict[str, Any] = field(default_factory=dict)
 
 
 DialogueFn = Callable[[DialogueContext], str]
@@ -95,6 +97,7 @@ def _build_payload(context: DialogueContext) -> Dict[str, Any]:
             else None
         ),
         "recommendations": _safe_recommendations(context.recommendations),
+        "follow_up_analysis": context.follow_up_analysis,
         "instructions": {
             "ask_one_question_max": True,
             "avoid_mood_form": True,
@@ -104,6 +107,9 @@ def _build_payload(context: DialogueContext) -> Dict[str, Any]:
             "do_not_invent_catalog_facts": True,
             "off_topic_must_redirect_to_watch_choices": (
                 context.phase == "off_topic"
+            ),
+            "feedback_question_answer_directly": (
+                context.phase == "feedback_question"
             ),
         },
     }
@@ -145,6 +151,8 @@ def _fallback_dialogue(context: DialogueContext) -> str:
         return "Tell me what you feel like watching, or how your day has been. I will ask one question at a time and then recommend a few picks."
     if context.phase == "feedback_clarification":
         return "Got it. Sounds like the wrong vibe. Was it too heavy, too boring, or just not the kind of feel you wanted?"
+    if context.phase == "feedback_question":
+        return _fallback_feedback_question(context)
     if context.phase == "off_topic":
         return "I am ScreenBuddy, so I can help you choose something to watch. Tell me what kind of mood or night you are in, and I will find a movie or show that fits."
     if context.phase == "no_results":
@@ -164,7 +172,16 @@ def _fallback_follow_up(context: DialogueContext) -> str:
         return "Do you want a quick watch, or something you can settle into?"
     if target == "genre_or_constraint":
         return "Is there anything I should steer toward or away from?"
-    return "What do you want the watch to do for you tonight?"
+    return "What should it do for you tonight: help you switch off, feel cozy, laugh, or get pulled into something exciting?"
+
+
+def _fallback_feedback_question(context: DialogueContext) -> str:
+    question_type = context.follow_up_analysis.get("question_type")
+    if question_type == "constraint_acceptability":
+        return "Yes, that is enough. I can keep the search to that constraint if you want."
+    if question_type == "search_capability":
+        return "Yes, I can adjust the search around that. Tell me if you want me to apply it."
+    return "Yes, I can work with that. Tell me if you want me to adjust the search."
 
 
 def _fallback_recommendations(
