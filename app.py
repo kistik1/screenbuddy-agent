@@ -84,8 +84,10 @@ async def telegram_webhook(request: Request):
     data = await request.json()
     message = data.get("message", {})
     chat = message.get("chat", {})
+    sender = message.get("from", {})
     text = (message.get("text") or "").strip()
     chat_id = chat.get("id")
+    user_id = sender.get("id")
 
     if not chat_id:
         return {
@@ -93,9 +95,15 @@ async def telegram_webhook(request: Request):
             "error": "missing chat_id",
         }
 
+    if not user_id:
+        return {
+            "ok": False,
+            "error": "missing user_id",
+        }
+
     if text == "/start":
-        screenbuddy_agent.reset(chat_id)
-        session = conversation_store.get_or_create(chat_id)
+        screenbuddy_agent.reset(user_id)
+        session = conversation_store.get_or_create(user_id)
         session.add_user_turn(
             text,
             kind="command",
@@ -117,8 +125,8 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     if text == "/new":
-        screenbuddy_agent.reset(chat_id)
-        session = conversation_store.get_or_create(chat_id)
+        screenbuddy_agent.reset(user_id)
+        session = conversation_store.get_or_create(user_id)
         session.add_user_turn(
             text,
             kind="command",
@@ -140,9 +148,9 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     if text == "/help":
-        session = conversation_store.get(chat_id)
+        session = conversation_store.get(user_id)
         if session is None:
-            session = conversation_store.get_or_create(chat_id)
+            session = conversation_store.get_or_create(user_id)
         session.add_user_turn(
             text,
             kind="command",
@@ -164,7 +172,7 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     agent_response = screenbuddy_agent.handle_message(
-        chat_id=chat_id,
+        user_id=user_id,
         text=text,
     )
     send_telegram_message(chat_id, agent_response.message)

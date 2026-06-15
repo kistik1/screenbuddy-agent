@@ -335,6 +335,42 @@ def test_agent_recommends_after_enough_context(monkeypatch):
     assert "funny" in search_calls[0]["query_text"]
 
 
+def test_agent_infers_fun_content_hints_from_light_request(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I had a tiring day. I want something light and not too long. "
+        "I only have Netflix.",
+    )
+
+    assert response.searched is True
+    assert response.intent is not None
+    assert response.intent.genres == []
+    assert "comedy" in search_calls[0]["query_text"]
+    assert "stand-up comedy" in search_calls[0]["query_text"]
+    assert search_calls[0]["duration_preference"] == "short"
+    assert search_calls[0]["streaming"] == "netflix"
+
+
+def test_agent_does_not_override_explicit_genre_with_light_hints(monkeypatch):
+    monkeypatch.setattr(analyzer, "client", None)
+    search_calls = []
+    agent = _agent(search_calls)
+
+    response = agent.handle_message(
+        123,
+        "I am tired and want a light thriller on Netflix.",
+    )
+
+    assert response.searched is True
+    assert response.intent is not None
+    assert response.intent.genres == ["thriller"]
+    assert "stand-up comedy" not in search_calls[0]["query_text"]
+
+
 def test_agent_tracks_full_transcript_for_dialogue_context(monkeypatch):
     monkeypatch.setattr(analyzer, "client", None)
     search_calls = []
@@ -950,7 +986,7 @@ def test_webhook_uses_agent_response(monkeypatch):
     monkeypatch.setattr(
         app_module.screenbuddy_agent,
         "handle_message",
-        lambda chat_id, text: type(
+        lambda user_id, text: type(
             "Response",
             (),
             {"message": "Agent reply"},
@@ -968,6 +1004,7 @@ def test_webhook_uses_agent_response(monkeypatch):
         json={
             "message": {
                 "chat": {"id": 456},
+                "from": {"id": 123},
                 "text": "Hello",
             }
         },
@@ -1002,6 +1039,7 @@ def test_webhook_start_resets_session_and_sends_onboarding(monkeypatch):
         json={
             "message": {
                 "chat": {"id": 456},
+                "from": {"id": 456},
                 "text": "/start",
             }
         },
@@ -1036,7 +1074,7 @@ def test_webhook_new_resets_session_and_sends_new_session_copy(
     monkeypatch.setattr(
         app_module.screenbuddy_agent,
         "handle_message",
-        lambda chat_id, text: (_ for _ in ()).throw(
+        lambda user_id, text: (_ for _ in ()).throw(
             AssertionError("handle_message should not run for /new")
         ),
     )
@@ -1052,6 +1090,7 @@ def test_webhook_new_resets_session_and_sends_new_session_copy(
         json={
             "message": {
                 "chat": {"id": 456},
+                "from": {"id": 456},
                 "text": "/new",
             }
         },
@@ -1085,7 +1124,7 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
     monkeypatch.setattr(
         app_module.screenbuddy_agent,
         "handle_message",
-        lambda chat_id, text: (_ for _ in ()).throw(
+        lambda user_id, text: (_ for _ in ()).throw(
             AssertionError("handle_message should not run for /help")
         ),
     )
@@ -1101,6 +1140,7 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
         json={
             "message": {
                 "chat": {"id": 456},
+                "from": {"id": 456},
                 "text": "/help",
             }
         },
@@ -1115,6 +1155,130 @@ def test_webhook_help_skips_agent_and_preserves_session(monkeypatch):
         ("user", "/help", "command"),
         ("assistant", "Generated help", "command"),
     ]
+
+
+def test_webhook_keys_session_by_user_and_replies_to_latest_chat(monkeypatch):
+    app_module = importlib.import_module("app")
+    user_id = 123
+    app_module.screenbuddy_agent.reset(user_id)
+    seen_user_ids = []
+    sent_messages = []
+
+    def fake_handle_message(user_id, text):
+        seen_user_ids.append(user_id)
+        session = app_module.conversation_store.get_or_create(user_id)
+        session.add_user_turn(text)
+        app_module.conversation_store.set(session)
+        return type("Response", (), {"message": f"Reply to {text}"})()
+
+    monkeypatch.setattr(
+        app_module.screenbuddy_agent,
+        "handle_message",
+        fake_handle_message,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append((chat_id, text)) or True,
+    )
+
+    client = TestClient(app_module.app)
+    client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 456},
+                "from": {"id": user_id},
+                "text": "First",
+            }
+        },
+    )
+    client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 789},
+                "from": {"id": user_id},
+                "text": "Second",
+            }
+        },
+    )
+
+    session = app_module.conversation_store.get(user_id)
+    assert seen_user_ids == [user_id, user_id]
+    assert session is not None
+    assert session.messages == ["First", "Second"]
+    assert sent_messages == [
+        (456, "Reply to First"),
+        (789, "Reply to Second"),
+    ]
+
+
+def test_webhook_keeps_different_users_independent(monkeypatch):
+    app_module = importlib.import_module("app")
+    for user_id in (123, 789):
+        app_module.screenbuddy_agent.reset(user_id)
+
+    def fake_handle_message(user_id, text):
+        session = app_module.conversation_store.get_or_create(user_id)
+        session.add_user_turn(text)
+        app_module.conversation_store.set(session)
+        return type("Response", (), {"message": "Reply"})()
+
+    monkeypatch.setattr(
+        app_module.screenbuddy_agent,
+        "handle_message",
+        fake_handle_message,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message",
+        lambda chat_id, text: True,
+    )
+
+    client = TestClient(app_module.app)
+    for user_id, text in ((123, "First user"), (789, "Second user")):
+        client.post(
+            "/webhook",
+            json={
+                "message": {
+                    "chat": {"id": 456},
+                    "from": {"id": user_id},
+                    "text": text,
+                }
+            },
+        )
+
+    assert app_module.conversation_store.get(123).messages == ["First user"]
+    assert app_module.conversation_store.get(789).messages == ["Second user"]
+
+
+def test_webhook_rejects_missing_user_id(monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(
+        app_module.screenbuddy_agent,
+        "handle_message",
+        lambda user_id, text: (_ for _ in ()).throw(
+            AssertionError("handle_message should not run without user_id")
+        ),
+    )
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "chat": {"id": 456},
+                "text": "Hello",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "error": "missing user_id",
+    }
 
 
 def test_session_timeout_env_parser_falls_back_for_invalid_values(

@@ -156,6 +156,11 @@ def _fallback_dialogue(context: DialogueContext) -> str:
     if context.phase == "off_topic":
         return "I am ScreenBuddy, so I can help you choose something to watch. Tell me what kind of mood or night you are in, and I will find a movie or show that fits."
     if context.phase == "no_results":
+        if (
+            context.intent
+            and context.intent.has_light_content_hint()
+        ):
+            return "I could not find a strong match yet. Would you prefer stand-up, a comedy movie, or a fun TV show?"
         return "I am not finding a strong match yet. Should I make it lighter, funnier, cozier, or more exciting?"
     if context.phase == "recommendations":
         return _fallback_recommendations(context.recommendations)

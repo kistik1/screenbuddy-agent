@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -119,6 +120,10 @@ class WatchSearchIntent:
             if value:
                 query_parts.append(value.replace("_", " "))
         query_parts.extend(self.genres)
+        if self.has_light_content_hint():
+            query_parts.extend(
+                ["comedy", "stand-up comedy", "sitcom", "playful", "fun"]
+            )
         query_parts.extend(f"not {item}" for item in self.avoid_genres)
 
         return {
@@ -133,10 +138,20 @@ class WatchSearchIntent:
             "type": self.content_type,
         }
 
+    def has_light_content_hint(self) -> bool:
+        if self.genres or self.intensity_tolerance != "low":
+            return False
+        return bool(
+            re.search(
+                r"\b(light|easy|easygoing|simple|not heavy|nothing heavy)\b",
+                self.free_text_context.lower(),
+            )
+        )
+
 
 @dataclass
 class ConversationSession:
-    chat_id: int
+    user_id: int
     messages: List[str] = field(default_factory=list)
     transcript: List[ConversationTurn] = field(default_factory=list)
     user_state: UserPreferenceState = field(
@@ -205,29 +220,29 @@ class ConversationSessionStore:
         )
         self._clock = clock
 
-    def get_or_create(self, chat_id: int) -> ConversationSession:
-        session = self._sessions.get(chat_id)
+    def get_or_create(self, user_id: int) -> ConversationSession:
+        session = self._sessions.get(user_id)
         if session and self._is_expired(session):
-            self.clear(chat_id)
+            self.clear(user_id)
             session = None
 
         if session is None:
             session = ConversationSession(
-                chat_id=chat_id,
+                user_id=user_id,
                 updated_at=self._clock(),
             )
-            self._sessions[chat_id] = session
+            self._sessions[user_id] = session
         return session
 
-    def get(self, chat_id: int) -> Optional[ConversationSession]:
-        return self._sessions.get(chat_id)
+    def get(self, user_id: int) -> Optional[ConversationSession]:
+        return self._sessions.get(user_id)
 
     def set(self, session: ConversationSession) -> None:
         session.updated_at = self._clock()
-        self._sessions[session.chat_id] = session
+        self._sessions[session.user_id] = session
 
-    def clear(self, chat_id: int) -> None:
-        self._sessions.pop(chat_id, None)
+    def clear(self, user_id: int) -> None:
+        self._sessions.pop(user_id, None)
 
     def _is_expired(self, session: ConversationSession) -> bool:
         return (

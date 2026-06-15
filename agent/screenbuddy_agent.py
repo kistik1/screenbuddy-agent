@@ -56,12 +56,12 @@ class ScreenBuddyAgent:
         self.top_n = top_n
         self.min_similarity = min_similarity
 
-    def reset(self, chat_id: int) -> None:
-        self.store.clear(chat_id)
+    def reset(self, user_id: int) -> None:
+        self.store.clear(user_id)
 
-    def handle_message(self, chat_id: int, text: str) -> AgentResponse:
+    def handle_message(self, user_id: int, text: str) -> AgentResponse:
         clean_text = text.strip()
-        session = self.store.get_or_create(chat_id)
+        session = self.store.get_or_create(user_id)
         session.add_user_turn(clean_text)
 
         topic_classification = classify_message_topic(
@@ -119,7 +119,7 @@ class ScreenBuddyAgent:
                     "Good watching time.",
                     kind="feedback_accepted",
                 )
-                self.store.clear(chat_id)
+                self.store.clear(user_id)
                 return AgentResponse(message="Good watching time.")
 
             if follow_up_intent == "refine":

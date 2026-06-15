@@ -78,40 +78,29 @@ def apply_filters(
             .str.contains(content_type.lower(), na=False)
         ]
     if duration_preference:
+        durations = filtered_df["duration"].fillna("").astype(str).str.lower()
+        minutes = pd.to_numeric(
+            durations.str.extract(r"(\d+)\s*min", expand=False),
+            errors="coerce",
+        )
+        seasons = pd.to_numeric(
+            durations.str.extract(r"(\d+)\s*season", expand=False),
+            errors="coerce",
+        )
+
         if duration_preference == "short":
             filtered_df = filtered_df[
-                filtered_df["duration"]
-                .astype(str)
-                .str.contains(
-                    "60|70|80|90|1 season",
-                    case=False,
-                    na=False,
-                    regex=True,
-                )
+                minutes.le(90) | seasons.le(1)
             ]
 
         elif duration_preference == "medium":
             filtered_df = filtered_df[
-                filtered_df["duration"]
-                .astype(str)
-                .str.contains(
-                    "100|110|120|2 seasons|3 seasons",
-                    case=False,
-                    na=False,
-                    regex=True,
-                )
+                minutes.between(91, 130) | seasons.between(2, 3)
             ]
 
         elif duration_preference == "long":
             filtered_df = filtered_df[
-                filtered_df["duration"]
-                .astype(str)
-                .str.contains(
-                    "140|150|4 seasons|5 seasons|6 seasons",
-                    case=False,
-                    na=False,
-                    regex=True,
-                )
+                minutes.gt(130) | seasons.ge(4)
             ]
 
     return filtered_df

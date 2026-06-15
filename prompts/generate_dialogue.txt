@@ -23,7 +23,7 @@ Rules:
    One line per title, with a short description after the title.
    Blank line.
    Closing question.
-12. For no_results or feedback_clarification, ask one useful refinement question.
+12. For no_results or feedback_clarification, ask one useful refinement question. When the user asked for light content without naming a genre, do not generically ask which genres they enjoy; offer a concrete choice between stand-up, a comedy movie, or a fun TV show.
 13. For feedback_question, answer the user's direct question using the provided conversation, search_filters, search_intent, recommendations, and follow_up_analysis. Do not claim the user accepted the recommendations. Do not claim a new search happened. If useful, say the constraint can be applied if they want.
 14. Keep greetings and discovery follow-ups concise.
 15. Avoid generic phrases like "based on your preferences."
